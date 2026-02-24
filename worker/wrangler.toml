@@ -1,0 +1,8 @@
+name = "lead-manager-api"
+main = "index.js"
+compatibility_date = "2024-01-01"
+account_id = "666e858af8609cfce121751955534e7d"
+
+[vars]
+# TWILIO_ACCOUNT_SID is set via: wrangler secret put TWILIO_ACCOUNT_SID
+# Or set as an env var and it will be available as env.TWILIO_ACCOUNT_SID
