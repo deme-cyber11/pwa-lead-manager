@@ -226,7 +226,7 @@ async function loadBizData(idx) {
       }
 
       const unread = contact.messages.filter(m => m.direction === 'inbound' && m.status !== 'read').length;
-      const initials = contact.number.slice(-2);
+      const initials = contact.number.replace(/\D/g,'').slice(1,4) || contact.number.slice(-2);
 
       return `
         <div class="conv-item" data-number="${contact.number}">
