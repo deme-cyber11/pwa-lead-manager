@@ -4,6 +4,20 @@
 
 const COSTA_PHONE = '+17344761457';
 
+// Tailored missed-call SMS per Twilio number
+const MISSED_CALL_MESSAGES = {
+  '+19187232096': "Hey, I'm sorry I missed your call! Is it water damage, flooding, or mold? Please reply with what you need and your location and I'll get right back to you. — Costa",
+  '+12562159287': "Hey, I'm sorry I missed your call! Is it your AC, heating, or a new system install? Please reply with what you need and your location and I'll get right back to you. — Costa",
+  '+17262685597': "Hey, I'm sorry I missed your call! Is it pool replastering, resurfacing, or tile work? Please reply with what you need and your location and I'll get right back to you. — Costa",
+  '+19042044753': "Hey, I'm sorry I missed your call! Is it a garage floor, basement, or commercial space? Please reply with what you need and your location and I'll get right back to you. — Costa",
+  '+18137059021': "Hey, I'm sorry I missed your call! Is it a driveway, patio, or pool deck? Please reply with what you need and your location and I'll get right back to you. — Costa",
+  '+18653788377': "Hey, I'm sorry I missed your call! Is it your driveway, house exterior, or deck? Please reply with what you need and your location and I'll get right back to you. — Costa",
+  '+17194968287': "Hey, I'm sorry I missed your call! Is it mold removal, an inspection, or water damage? Please reply with what you need and your location and I'll get right back to you. — Costa",
+  '+14235891682': "Hey, I'm sorry I missed your call! Is it a full detail, interior cleaning, or paint correction? Please reply with what you need and your location and I'll get right back to you. — Costa",
+  '+17192158962': "Hey, I'm sorry I missed your call! Is it refinishing, new installation, or board repairs? Please reply with what you need and your location and I'll get right back to you. — Costa",
+  '+15094619375': "Hey, I'm sorry I missed your call! Is it refinishing, new installation, or board repairs? Please reply with what you need and your location and I'll get right back to you. — Costa",
+};
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -17,14 +31,29 @@ export default {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
-    // Auth check
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    // ── Twilio webhooks — bypass PIN auth, use webhook secret instead ──
+    if (path === '/webhook/missed-call' && request.method === 'POST') {
+      const secret = url.searchParams.get('secret');
+      if (secret !== env.WEBHOOK_SECRET) {
+        return new Response('Forbidden', { status: 403 });
+      }
+      return await handleMissedCall(request, env);
+    }
+    if (path === '/webhook/sms' && request.method === 'POST') {
+      return await handleIncomingSMS(request, env);
+    }
+    if (path === '/webhook/call' && request.method === 'POST') {
+      return await handleIncomingCall(request, env);
+    }
+
+    // Auth check for all other routes
     const authToken = request.headers.get('X-Auth-Token');
     if (authToken !== env.AUTH_PIN) {
       return json({ error: 'Unauthorized' }, 401);
     }
-
-    const url = new URL(request.url);
-    const path = url.pathname;
 
     try {
       if (path === '/messages' && request.method === 'GET') {
@@ -51,14 +80,6 @@ export default {
         }
         return json({ ok: true });
       }
-      // Twilio webhook for incoming SMS/calls (push notifications)
-      if (path === '/webhook/sms' && request.method === 'POST') {
-        return await handleIncomingSMS(request, env);
-      }
-      if (path === '/webhook/call' && request.method === 'POST') {
-        return await handleIncomingCall(request, env);
-      }
-
       return json({ error: 'Not found' }, 404);
     } catch (err) {
       return json({ error: err.message }, 500);
@@ -175,6 +196,40 @@ async function handleIncomingSMS(request, env) {
   return new Response('<Response></Response>', {
     headers: { 'Content-Type': 'text/xml' }
   });
+}
+
+async function handleMissedCall(request, env) {
+  const formData = await request.formData();
+  const callStatus = formData.get('CallStatus');
+  const from       = formData.get('From');   // caller's number
+  const to         = formData.get('To');     // our Twilio number
+
+  const missedStatuses = ['no-answer', 'busy', 'canceled', 'failed'];
+  if (!missedStatuses.includes(callStatus)) {
+    return new Response('OK', { status: 200 });
+  }
+
+  // Look up tailored message for this number
+  const message = MISSED_CALL_MESSAGES[to] ||
+    "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
+
+  // Send SMS to the caller
+  await twilioPost(env, 'Messages.json', {
+    From: to,    // reply from the same site number they called
+    To:   from,  // back to the caller
+    Body: message,
+  });
+
+  // Also push notification to PWA
+  if (env.PUSH_SUBS) {
+    await sendPushToAll(env, {
+      title: `Missed call from ${from}`,
+      body: `Auto-text sent to ${from}`,
+      tag: `missed-${from}-${Date.now()}`
+    });
+  }
+
+  return new Response('OK', { status: 200 });
 }
 
 async function handleIncomingCall(request, env) {
