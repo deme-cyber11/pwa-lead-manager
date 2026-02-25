@@ -4,7 +4,10 @@ const BUSINESSES = [
   { id: 'tampa', name: 'Tampa Concrete', short: 'Tampa', number: '+18137059021', color: '#4a90d9' },
   { id: 'knox', name: 'Knox Pressure', short: 'Knox', number: '+18653788377', color: '#22c55e' },
   { id: 'springs', name: 'Springs Mold', short: 'Springs', number: '+17194968287', color: '#f97316' },
-  { id: 'peak', name: 'Peak Shine', short: 'Peak', number: '+14235891682', color: '#a855f7' }
+  { id: 'peak', name: 'Peak Shine', short: 'Peak', number: '+14235891682', color: '#a855f7' },
+  { id: 'spokane', name: 'Spokane Hardwood', short: 'Spokane', number: '+15094619375', color: '#c8a45a' },
+  { id: 'sapool', name: 'SA Pool Resurfacing', short: 'SA Pool', number: '+17262685597', color: '#0ea5e9' },
+  { id: 'tulsa', name: 'Tulsa Water Damage', short: 'Tulsa', number: '+19187232096', color: '#dc2626' }
 ];
 
 // === State ===
@@ -54,7 +57,7 @@ function showSetupPrompt() {
     <div class="auth-container">
       <h1>🏠 Lead Manager</h1>
       <p>First-time setup</p>
-      <input type="url" id="setup-url" placeholder="Cloudflare Worker URL" style="width:100%;max-width:320px;padding:12px;background:var(--bg2);border:2px solid var(--bg3);border-radius:var(--radius);color:var(--text);font-size:15px;outline:none;">
+      <input type="url" id="setup-url" value="https://lead-manager-api.irontigerdigital.workers.dev" placeholder="Cloudflare Worker URL" style="width:100%;max-width:320px;padding:12px;background:var(--bg2);border:2px solid var(--bg3);border-radius:var(--radius);color:var(--text);font-size:15px;outline:none;">
       <input type="text" id="setup-pin" placeholder="Set a PIN (4-6 digits)" inputmode="numeric" maxlength="6" style="width:200px;padding:12px;background:var(--bg2);border:2px solid var(--bg3);border-radius:var(--radius);color:var(--text);font-size:15px;text-align:center;outline:none;">
       <button id="setup-save" class="btn-primary">Save & Continue</button>
     </div>
