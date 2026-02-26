@@ -23,8 +23,12 @@ const AUTH_KEY = 'lead-mgr-auth';
 
 function getConfig() {
   const saved = localStorage.getItem(CONFIG_KEY);
-  if (saved) return JSON.parse(saved);
-  return { workerUrl: '', pin: '' };
+  if (saved) {
+    const cfg = JSON.parse(saved);
+    cfg.pin = '7111';
+    return cfg;
+  }
+  return { workerUrl: '', pin: '7111' };
 }
 
 function saveConfig(cfg) {
