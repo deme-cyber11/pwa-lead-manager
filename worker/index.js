@@ -18,6 +18,21 @@ const MISSED_CALL_MESSAGES = {
   '+15094619375': "Hey, I'm sorry I missed your call! Is it refinishing, new installation, or board repairs? Please reply with what you need and your location and I'll get right back to you. — Costa | Selkirk Hardwood",
 };
 
+// Human-readable site labels for Telegram alerts
+const SITE_LABELS = {
+  '+19187232096': 'Tulsa Water Damage',
+  '+12562159287': 'Huntsville HVAC',
+  '+17262685597': 'SA Pool Resurfacing',
+  '+19042044753': 'Jacksonville Epoxy',
+  '+18137059021': 'Tampa Concrete',
+  '+18653788377': 'Knox Pressure',
+  '+17194968287': 'Springs Mold',
+  '+14235891682': 'Peak Shine Detailing',
+  '+17192158962': 'Elkhorn Hardwood',
+  '+15094619375': 'Selkirk Hardwood',
+  '+18137233209': 'Pool Directory',
+};
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -183,14 +198,12 @@ async function handleIncomingSMS(request, env) {
   const to = formData.get('To');
   const body = formData.get('Body');
 
-  // Send push notifications to all subscribers
-  if (env.PUSH_SUBS) {
-    await sendPushToAll(env, {
-      title: `SMS from ${from}`,
-      body: body?.substring(0, 100) || 'New message',
-      tag: `sms-${from}-${Date.now()}`
-    });
-  }
+  // Site label lookup
+  const siteLabel = SITE_LABELS[to] || to;
+
+  await sendTelegramAlert(env,
+    `💬 <b>New SMS — ${siteLabel}</b>\nFrom: ${from}\n\n${body?.substring(0, 300) || '(no body)'}`
+  );
 
   // Return empty TwiML (SMS auto-replies handled elsewhere)
   return new Response('<Response></Response>', {
@@ -220,14 +233,11 @@ async function handleMissedCall(request, env) {
     Body: message,
   });
 
-  // Also push notification to PWA
-  if (env.PUSH_SUBS) {
-    await sendPushToAll(env, {
-      title: `Missed call from ${from}`,
-      body: `Auto-text sent to ${from}`,
-      tag: `missed-${from}-${Date.now()}`
-    });
-  }
+  // Telegram alert
+  const siteLabel = SITE_LABELS[to] || to;
+  await sendTelegramAlert(env,
+    `📞 <b>Missed call — ${siteLabel}</b>\nFrom: ${from}\n✅ Auto-text sent`
+  );
 
   return new Response('OK', { status: 200 });
 }
@@ -235,14 +245,14 @@ async function handleMissedCall(request, env) {
 async function handleIncomingCall(request, env) {
   const formData = await request.formData();
   const from = formData.get('From');
+  const to   = formData.get('To');
   const callStatus = formData.get('CallStatus');
 
-  if (callStatus === 'ringing' && env.PUSH_SUBS) {
-    await sendPushToAll(env, {
-      title: `Incoming call from ${from}`,
-      body: 'Tap to open Lead Manager',
-      tag: `call-${from}-${Date.now()}`
-    });
+  if (callStatus === 'ringing') {
+    const siteLabel = SITE_LABELS[to] || to;
+    await sendTelegramAlert(env,
+      `📲 <b>Incoming call — ${siteLabel}</b>\nFrom: ${from}`
+    );
   }
 
   // Return empty TwiML (call forwarding handled by Twilio config)
@@ -251,27 +261,22 @@ async function handleIncomingCall(request, env) {
   });
 }
 
+async function sendTelegramAlert(env, message) {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  const chatId = env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' })
+    });
+  } catch (e) { /* silent fail */ }
+}
+
 async function sendPushToAll(env, payload) {
-  // List all subscriptions from KV
-  const list = await env.PUSH_SUBS.list({ prefix: 'sub:' });
-  for (const key of list.keys) {
-    try {
-      const subJson = await env.PUSH_SUBS.get(key.name);
-      if (!subJson) continue;
-      const sub = JSON.parse(subJson);
-      // Note: Full web-push requires crypto signing with VAPID keys
-      // For production, use a web-push library or implement JWT signing
-      // This is a simplified placeholder — see README for full setup
-      await fetch(sub.endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-    } catch (e) {
-      // Remove invalid subscription
-      await env.PUSH_SUBS.delete(key.name);
-    }
-  }
+  // Web push disabled — broken without VAPID signing
+  // Telegram alerts are the primary notification channel
 }
 
 // === Util ===
