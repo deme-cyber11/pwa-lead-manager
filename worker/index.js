@@ -64,6 +64,11 @@ export default {
       return await handleIncomingCall(request, env);
     }
 
+    // Public health check — no auth needed
+    if (path === '/health') {
+      return json({ ok: true, ts: Date.now(), worker: 'lead-manager-api' });
+    }
+
     // Auth check for all other routes
     const authToken = request.headers.get('X-Auth-Token');
     if (authToken !== env.AUTH_PIN) {
