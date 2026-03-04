@@ -20,6 +20,25 @@ let pullStartY = 0;
 // === Config ===
 const CONFIG_KEY = 'lead-mgr-config';
 const AUTH_KEY = 'lead-mgr-auth';
+const READ_KEY  = 'lead-mgr-read';
+
+// === Read Tracking ===
+function getReadTimestamps() {
+  try { return JSON.parse(localStorage.getItem(READ_KEY) || '{}'); }
+  catch { return {}; }
+}
+function markConversationRead(bizId, contactNumber) {
+  const reads = getReadTimestamps();
+  reads[`${bizId}|${contactNumber}`] = Date.now();
+  localStorage.setItem(READ_KEY, JSON.stringify(reads));
+}
+function isMessageUnread(msg, bizId, contactNumber) {
+  if (!msg.direction.includes('inbound')) return false;
+  const reads = getReadTimestamps();
+  const lastRead = reads[`${bizId}|${contactNumber}`] || 0;
+  const msgTime = new Date(msg.date_created || msg.date_sent).getTime();
+  return msgTime > lastRead;
+}
 
 function getConfig() {
   const saved = localStorage.getItem(CONFIG_KEY);
@@ -232,7 +251,7 @@ async function loadBizData(idx) {
         preview = `${lastCall.direction === 'inbound' ? '📥' : '📤'} Call ${dur}`;
       }
 
-      const unread = contact.messages.filter(m => m.direction === 'inbound' && m.status !== 'read').length;
+      const unread = contact.messages.filter(m => isMessageUnread(m, biz.id, contact.number)).length;
       const initials = contact.number.replace(/\D/g,'').slice(1,4) || contact.number.slice(-2);
 
       return `
@@ -251,7 +270,7 @@ async function loadBizData(idx) {
     }).join('');
 
     // Update badge
-    const totalUnread = sorted.reduce((sum, c) => sum + c.messages.filter(m => m.direction === 'inbound' && m.status !== 'read').length, 0);
+    const totalUnread = sorted.reduce((sum, c) => sum + c.messages.filter(m => isMessageUnread(m, biz.id, c.number)).length, 0);
     updateBadge(biz.id, totalUnread);
 
   } catch (err) {
@@ -267,9 +286,17 @@ function openConversation(contactNumber) {
   const contact = conversations[biz.id]?.[contactNumber];
   if (!contact) return;
 
+  // Mark conversation as read
+  markConversationRead(biz.id, contactNumber);
+
   document.getElementById('conversation-list').classList.add('hidden');
   document.getElementById('conversation-detail').classList.remove('hidden');
   document.getElementById('detail-contact').textContent = formatPhone(contactNumber);
+
+  // Recompute badge for this biz (clear unread count)
+  const bizConvs = conversations[biz.id] ? Object.values(conversations[biz.id]) : [];
+  const newTotal = bizConvs.reduce((sum, c) => sum + c.messages.filter(m => isMessageUnread(m, biz.id, c.number)).length, 0);
+  updateBadge(biz.id, newTotal);
 
   // Merge messages and calls chronologically
   const items = [];
@@ -383,11 +410,12 @@ function setupEventListeners() {
     if (item) openConversation(item.dataset.number);
   });
 
-  // Back button
+  // Back button — re-render list so read badges clear
   document.getElementById('btn-back').addEventListener('click', () => {
     currentContact = null;
     document.getElementById('conversation-detail').classList.add('hidden');
     document.getElementById('conversation-list').classList.remove('hidden');
+    loadBizData(currentBiz);
   });
 
   // Send message
