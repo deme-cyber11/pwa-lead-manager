@@ -64,9 +64,11 @@ export default {
       return await handleIncomingCall(request, env);
     }
 
-    // Public health check — no auth needed
+    // Public health check — no auth, no side effects
     if (path === '/health') {
-      return json({ ok: true, ts: Date.now(), worker: 'lead-manager-api' });
+      const tgOk = !!(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID);
+      const twOk = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN);
+      return json({ ok: true, ts: Date.now(), worker: 'lead-manager-api', telegram: tgOk, twilio: twOk });
     }
 
     // Auth check for all other routes
