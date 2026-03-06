@@ -71,6 +71,43 @@ export default {
       return json({ ok: true, ts: Date.now(), worker: 'lead-manager-api', telegram: tgOk, twilio: twOk });
     }
 
+    // ── Stripe Checkout — public, called from irontigerdigital.com/checkout.html ──
+    if (path === '/stripe/checkout' && request.method === 'POST') {
+      const PRICE_IDS = {
+        highticket: 'price_1T7pxWRxpHV3ISsgBkzr3ML5', // $200/mo
+        standard:   'price_1T7pxZRxpHV3ISsgypq9YT32', // $130/mo
+      };
+      try {
+        const body = await request.json();
+        const priceId = PRICE_IDS[body.priceType];
+        if (!priceId) return json({ error: 'Invalid plan' }, 400);
+        if (!env.STRIPE_SECRET_KEY) return json({ error: 'Stripe not configured' }, 500);
+
+        const params = new URLSearchParams({
+          'mode': 'subscription',
+          'line_items[0][price]': priceId,
+          'line_items[0][quantity]': '1',
+          'success_url': 'https://www.irontigerdigital.com/success.html?session_id={CHECKOUT_SESSION_ID}',
+          'cancel_url': 'https://www.irontigerdigital.com/checkout.html',
+          'allow_promotion_codes': 'true',
+        });
+
+        const stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: params.toString(),
+        });
+        const session = await stripeRes.json();
+        if (!session.url) return json({ error: session.error?.message || 'Stripe error' }, 500);
+        return json({ url: session.url });
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
     // Auth check for all other routes
     const authToken = request.headers.get('X-Auth-Token');
     if (authToken !== env.AUTH_PIN) {
