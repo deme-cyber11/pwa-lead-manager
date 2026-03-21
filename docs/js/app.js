@@ -1,13 +1,20 @@
 // === Business Configuration ===
+const WORKER_URL = 'https://lead-manager-api.irontigerdigital.workers.dev';
+
 const BUSINESSES = [
-  { id: 'elkhorn', name: 'Elkhorn Hardwood', short: 'Elkhorn', number: '+17192158962', color: '#8B4513' },
-  { id: 'tampa', name: 'Tampa Concrete', short: 'Tampa', number: '+18137059021', color: '#4a90d9' },
-  { id: 'knox', name: 'Knox Pressure', short: 'Knox', number: '+18653788377', color: '#22c55e' },
-  { id: 'springs', name: 'Springs Mold', short: 'Springs', number: '+17194968287', color: '#f97316' },
-  { id: 'peak', name: 'Peak Shine', short: 'Peak', number: '+14235891682', color: '#a855f7' },
-  { id: 'spokane', name: 'Spokane Hardwood', short: 'Spokane', number: '+15094619375', color: '#c8a45a' },
-  { id: 'sapool', name: 'SA Pool Resurfacing', short: 'SA Pool', number: '+17262685597', color: '#0ea5e9' },
-  { id: 'tulsa', name: 'Tulsa Water Damage', short: 'Tulsa', number: '+19187232096', color: '#dc2626' }
+  { id: 'phxpool',   name: 'PHX Pool Resurfacing',  short: 'PHX Pool',  number: '+16232949154', color: '#06b6d4' },
+  { id: 'sapool',    name: 'SA Pool Resurfacing',    short: 'SA Pool',   number: '+17262685597', color: '#0ea5e9' },
+  { id: 'spokane',   name: 'Spokane Hardwood',       short: 'Spokane',   number: '+15094619375', color: '#c8a45a' },
+  { id: 'elkhorn',   name: 'Elkhorn Hardwood',       short: 'Elkhorn',   number: '+17192158962', color: '#8B4513' },
+  { id: 'peak',      name: 'Peak Shine Detailing',   short: 'Peak Shine',number: '+14235891682', color: '#a855f7' },
+  { id: 'knox',      name: 'Knox Pressure',          short: 'Knox',      number: '+18653788377', color: '#22c55e' },
+  { id: 'springs',   name: 'Springs Mold',           short: 'Springs',   number: '+17194968287', color: '#f97316' },
+  { id: 'huntsville',name: 'Huntsville HVAC',        short: 'Huntsville',number: '+12562159287', color: '#9333ea' },
+  { id: 'tampa',     name: 'Tampa Concrete',         short: 'Tampa',     number: '+18137059021', color: '#4a90d9' },
+  { id: 'jax',       name: 'Jacksonville Epoxy',     short: 'Jax Epoxy', number: '+19042044753', color: '#f59e0b' },
+  { id: 'jonesboro', name: 'Jonesboro Tree Pros',    short: 'Jonesboro', number: '+18707713364', color: '#16a34a' },
+  { id: 'tulsa',     name: 'Tulsa Water Damage',     short: 'Tulsa',     number: '+19187232096', color: '#dc2626' },
+  { id: 'poolusa',   name: 'Pool Resurfacing USA',   short: 'Pool USA',  number: '+18137233209', color: '#1d4ed8' },
 ];
 
 // === State ===
@@ -42,12 +49,10 @@ function isMessageUnread(msg, bizId, contactNumber) {
 
 function getConfig() {
   const saved = localStorage.getItem(CONFIG_KEY);
-  if (saved) {
-    const cfg = JSON.parse(saved);
-    cfg.pin = '7111';
-    return cfg;
-  }
-  return { workerUrl: '', pin: '7111' };
+  const cfg = saved ? JSON.parse(saved) : {};
+  cfg.workerUrl = WORKER_URL; // always hardcoded — no setup prompt needed
+  cfg.pin = '7111';
+  return cfg;
 }
 
 function saveConfig(cfg) {
