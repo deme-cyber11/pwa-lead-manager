@@ -74,8 +74,10 @@ export default {
     // ── Stripe Checkout — public, called from irontigerdigital.com/checkout.html ──
     if (path === '/stripe/checkout' && request.method === 'POST') {
       const PRICE_IDS = {
-        highticket: 'price_1T7pxWRxpHV3ISsgBkzr3ML5', // $200/mo
-        standard:   'price_1T7pxZRxpHV3ISsgypq9YT32', // $130/mo
+        premium:    'price_1TDtlcRxpHV3ISsgFfDlERsr', // $250/mo — bathroom remodel, siding, storm damage
+        highticket: 'price_1T7pxWRxpHV3ISsgBkzr3ML5', // $200/mo — HVAC, water damage, pool, septic
+        midrange:   'price_1TDtldRxpHV3ISsg4WjqjU5L', // $150/mo — tree service, hot tub, radon, chimney
+        standard:   'price_1T7pxZRxpHV3ISsgypq9YT32', // $130/mo — pressure washing, epoxy, detailing
       };
       try {
         const body = await request.json();
