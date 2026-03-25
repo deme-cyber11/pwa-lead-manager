@@ -348,12 +348,13 @@ async function handleMissedCall(request, env) {
     Body: message,
   });
 
-  // Telegram alert — hyperlinked site name, preview disabled in sendTelegramAlert
-  const siteLabel = SITE_LABELS[to] || to;
-  const siteUrl   = SITE_URLS[to];
-  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
+  // Telegram alert — customer number prominent for easy callback, no Twilio number shown
+  const siteLabel  = SITE_LABELS[to] || to;
+  const siteUrl    = SITE_URLS[to];
+  const siteLink   = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
+  const callerFmt  = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
   await sendTelegramAlert(env,
-    `📞 <b>Missed call — ${siteLink}</b>\nFrom: ${from}\n✅ Auto-text sent`
+    `📞 <b>Missed call — ${siteLink}</b>\n📲 ${callerFmt}\n✅ Auto-text sent`
   );
 
   return new Response('OK', { status: 200 });
@@ -369,8 +370,9 @@ async function handleIncomingCall(request, env) {
     const siteLabel = SITE_LABELS[to] || to;
     const siteUrl   = SITE_URLS[to];
     const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
+    const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
     await sendTelegramAlert(env,
-      `📲 <b>Incoming call — ${siteLink}</b>\nFrom: ${from}`
+      `📲 <b>Incoming call — ${siteLink}</b>\n📲 ${callerFmt}`
     );
   }
 
