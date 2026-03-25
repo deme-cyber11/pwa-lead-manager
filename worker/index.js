@@ -348,12 +348,12 @@ async function handleMissedCall(request, env) {
     Body: message,
   });
 
-  // Telegram alert — hyperlink the site so you know exactly which one rang
+  // Telegram alert — plain text site name + domain (no hyperlink to avoid preview expansion)
   const siteLabel = SITE_LABELS[to] || to;
-  const siteUrl   = SITE_URLS[to];
-  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
+  const siteUrl   = SITE_URLS[to] ? SITE_URLS[to].replace('https://', '') : null;
+  const siteLine  = siteUrl ? `${siteLabel} (${siteUrl})` : siteLabel;
   await sendTelegramAlert(env,
-    `📞 <b>Missed call — ${siteLink}</b>\nFrom: ${from}\n✅ Auto-text sent`
+    `📞 <b>Missed call — ${siteLine}</b>\nFrom: ${from}\n✅ Auto-text sent`
   );
 
   return new Response('OK', { status: 200 });
@@ -367,10 +367,10 @@ async function handleIncomingCall(request, env) {
 
   if (callStatus === 'ringing') {
     const siteLabel = SITE_LABELS[to] || to;
-    const siteUrl   = SITE_URLS[to];
-    const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
+    const siteUrl   = SITE_URLS[to] ? SITE_URLS[to].replace('https://', '') : null;
+    const siteLine  = siteUrl ? `${siteLabel} (${siteUrl})` : siteLabel;
     await sendTelegramAlert(env,
-      `📲 <b>Incoming call — ${siteLink}</b>\nFrom: ${from}`
+      `📲 <b>Incoming call — ${siteLine}</b>\nFrom: ${from}`
     );
   }
 
