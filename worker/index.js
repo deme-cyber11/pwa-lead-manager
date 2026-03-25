@@ -16,6 +16,22 @@ const MISSED_CALL_MESSAGES = {
   '+14235891682': "Hey, I'm sorry I missed your call! Is it a full detail, interior cleaning, or paint correction? Please reply with what you need and your location and I'll get right back to you. — Costa | Peak Shine Detailing",
   '+17192158962': "Hey, I'm sorry I missed your call! Is it refinishing, new installation, or board repairs? Please reply with what you need and your location and I'll get right back to you. — Costa | Elkhorn Hardwood",
   '+15094619375': "Hey, I'm sorry I missed your call! Is it refinishing, new installation, or board repairs? Please reply with what you need and your location and I'll get right back to you. — Costa | Selkirk Hardwood",
+  '+16232949154': "Hey, I'm sorry I missed your call! Is it replastering, resurfacing, or tile work? Please reply with what you need and I'll get right back to you. — Costa | PHX Pool Resurfacing",
+  '+18707713364': "Hey, I'm sorry I missed your call! Is it tree removal, trimming, or storm cleanup? Please reply with what you need and I'll get right back to you. — Costa | Jonesboro Tree Pros",
+  '+14695296768': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | McKinney Tree Service",
+  '+17207347645': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Boulder Bathroom Remodeling",
+  '+13195285190': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Cedar Rapids Radon",
+  '+13375482811': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Lake Charles Tree Service",
+  '+15807811781': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Lawton Tree Service",
+  '+15092367423': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Spokane Hot Tub Repair",
+  '+12255354918': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Baton Rouge Siding",
+  '+16056405642': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Rapid City Radon",
+  '+13374920960': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Lafayette Septic Service",
+  '+17857064425': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Topeka Foundation Repair",
+  '+13375208573': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Lake Charles Bathroom",
+  '+14064767479': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Billings Radon",
+  '+19529007486': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Bloomington Bathroom",
+  '+14052813672': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Edmond Bathroom",
 };
 
 // Human-readable site labels for Telegram alerts
@@ -31,6 +47,23 @@ const SITE_LABELS = {
   '+17192158962': 'Elkhorn Hardwood',
   '+15094619375': 'Selkirk Hardwood',
   '+18137233209': 'Pool Directory',
+  '+16232949154': 'PHX Pool Resurfacing',
+  '+18707713364': 'Jonesboro Tree Pros',
+  // New builds
+  '+14695296768': 'McKinney Tree Service',
+  '+17207347645': 'Boulder Bathroom Remodeling',
+  '+13195285190': 'Cedar Rapids Radon',
+  '+13375482811': 'Lake Charles Tree Service',
+  '+15807811781': 'Lawton Tree Service',
+  '+15092367423': 'Spokane Hot Tub Repair',
+  '+12255354918': 'Baton Rouge Siding',
+  '+16056405642': 'Rapid City Radon',
+  '+13374920960': 'Lafayette Septic Service',
+  '+17857064425': 'Topeka Foundation Repair',
+  '+13375208573': 'Lake Charles Bathroom',
+  '+14064767479': 'Billings Radon',
+  '+19529007486': 'Bloomington Bathroom',
+  '+14052813672': 'Edmond Bathroom',
 };
 
 const CORS_HEADERS = {
@@ -62,6 +95,11 @@ export default {
     }
     if (path === '/webhook/call' && request.method === 'POST') {
       return await handleIncomingCall(request, env);
+    }
+    if (path === '/webhook/whisper') {
+      const site = url.searchParams.get('site') || 'Iron Tiger Digital';
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Incoming call: ${site}.</Say></Response>`;
+      return new Response(twiml, { headers: { 'Content-Type': 'text/xml' } });
     }
 
     // Public health check — no auth, no side effects
