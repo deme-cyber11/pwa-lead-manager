@@ -66,6 +66,37 @@ const SITE_LABELS = {
   '+14052813672': 'Edmond Bathroom',
 };
 
+// Website URLs — used to hyperlink alerts so you know which site got the call
+const SITE_URLS = {
+  '+19187232096': 'https://tulsawaterdamagepros.com',
+  '+12562159287': 'https://huntsvillehvacpros.com',
+  '+17262685597': 'https://alamopoolresurfacing.com',
+  '+19042044753': 'https://904epoxyfloors.com',
+  '+18137059021': 'https://tampaconcretepros.com',
+  '+18653788377': 'https://knoxpressurepros.com',
+  '+17194968287': 'https://springsmoldsolutions.com',
+  '+14235891682': 'https://peakshinedetailing.com',
+  '+17192158962': 'https://elkhornhardwood.com',
+  '+15094619375': 'https://selkirkhardwood.com',
+  '+18137233209': 'https://poolresurfacingusa.com',
+  '+16232949154': 'https://phxpoolresurfacing.com',
+  '+18707713364': 'https://jonesborotreepros.com',
+  '+14695296768': 'https://mckinneytreedfw.com',
+  '+17207347645': 'https://boulderbathroomremodeling.com',
+  '+13195285190': 'https://cedarrapidsradon.com',
+  '+13375482811': 'https://lakecharlestreeservice.com',
+  '+15807811781': 'https://lawtonarbor.com',
+  '+15092367423': 'https://spokanehottubrepair.com',
+  '+12255354918': 'https://batonrougesidingpros.com',
+  '+16056405642': 'https://rapidcityradon.com',
+  '+13374920960': 'https://lafayetteseptictank.com',
+  '+17857064425': 'https://topekafoundationrepair.com',
+  '+13375208573': 'https://lakecharlestileandstone.com',
+  '+14064767479': 'https://billingsradon.com',
+  '+19529007486': 'https://bloomingtondoorbath.com',
+  '+14052813672': 'https://edmondbathroomremodeling.com',
+};
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -317,10 +348,12 @@ async function handleMissedCall(request, env) {
     Body: message,
   });
 
-  // Telegram alert
+  // Telegram alert — hyperlink the site so you know exactly which one rang
   const siteLabel = SITE_LABELS[to] || to;
+  const siteUrl   = SITE_URLS[to];
+  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
   await sendTelegramAlert(env,
-    `📞 <b>Missed call — ${siteLabel}</b>\nFrom: ${from}\n✅ Auto-text sent`
+    `📞 <b>Missed call — ${siteLink}</b>\nFrom: ${from}\n✅ Auto-text sent`
   );
 
   return new Response('OK', { status: 200 });
@@ -334,8 +367,10 @@ async function handleIncomingCall(request, env) {
 
   if (callStatus === 'ringing') {
     const siteLabel = SITE_LABELS[to] || to;
+    const siteUrl   = SITE_URLS[to];
+    const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
     await sendTelegramAlert(env,
-      `📲 <b>Incoming call — ${siteLabel}</b>\nFrom: ${from}`
+      `📲 <b>Incoming call — ${siteLink}</b>\nFrom: ${from}`
     );
   }
 
