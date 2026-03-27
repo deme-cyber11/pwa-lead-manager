@@ -206,6 +206,7 @@ export default {
       if (path === '/messages' && request.method === 'POST') return await sendMessage(request, env);
       if (path === '/calls' && request.method === 'GET') return await getCalls(url, env);
       if (path === '/spam-stats' && request.method === 'GET') return await getSpamStats(env);
+      if (path === '/contacts' && request.method === 'GET') return await getContacts(env);
       if (path === '/call' && request.method === 'POST') return await initiateCall(request, env);
       if (path === '/push/vapid-key') return json({ key: env.VAPID_PUBLIC_KEY || '' });
       if (path === '/push/subscribe' && request.method === 'POST') {
@@ -420,6 +421,19 @@ async function handleMissedCall(request, env) {
   );
 
   return new Response('OK', { status: 200 });
+}
+
+// ── Contacts Lookup ──
+
+async function getContacts(env) {
+  try {
+    if (!env.SPAM_LOG) return json({ contacts: {} });
+    const raw = await env.SPAM_LOG.get('contacts_map');
+    const contacts = raw ? JSON.parse(raw) : {};
+    return json({ contacts });
+  } catch (e) {
+    return json({ contacts: {} });
+  }
 }
 
 // ── Spam Stats ──

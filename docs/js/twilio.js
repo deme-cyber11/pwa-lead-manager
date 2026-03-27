@@ -61,5 +61,10 @@ const TwilioAPI = (() => {
     return request('/spam-stats');
   }
 
-  return { init, getMessages, sendMessage, getCalls, initiateCall, registerPush, getVapidKey, getSpamStats };
+  // Get CRM contacts lookup (phone → {name, business})
+  async function getContacts() {
+    return request('/contacts');
+  }
+
+  return { init, getMessages, sendMessage, getCalls, initiateCall, registerPush, getVapidKey, getSpamStats, getContacts };
 })();

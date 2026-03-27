@@ -40,6 +40,7 @@ let conversations = {}; // { bizId: { phoneNumber: { messages: [], calls: [] } }
 let currentContact = null;
 let unreadCounts = {};
 let pullStartY = 0;
+let crmContacts = {}; // { "+15551234567": { name: "Francisco", business: "ABC Plumbing" } }
 
 // === Config ===
 const CONFIG_KEY = 'lead-mgr-config';
@@ -145,11 +146,18 @@ function showAuth() {
   pinInput.focus();
 }
 
-function initApp(cfg) {
+async function initApp(cfg) {
   document.getElementById('auth-screen').classList.remove('active');
   document.getElementById('app-screen').classList.add('active');
 
   TwilioAPI.init(cfg.workerUrl, cfg.pin);
+
+  // Load CRM contacts for name lookups (non-blocking — dashboard still works without it)
+  TwilioAPI.getContacts().then(data => {
+    crmContacts = data.contacts || {};
+    console.log(`CRM contacts loaded: ${Object.keys(crmContacts).length}`);
+  }).catch(() => { /* silent fail — fallback to SMS parsing */ });
+
   buildTabs();
   selectBiz(0);
   setupEventListeners();
@@ -286,9 +294,12 @@ async function loadBizData(idx) {
       }
 
       const unread = contact.messages.filter(m => isMessageUnread(m, biz.id, contact.number)).length;
-      const contactName = extractContactName(contact);
-      const avatarText = contactName ? nameInitials(contactName) : contact.number.replace(/\D/g,'').slice(1,4);
-      const displayName = contactName || formatPhone(contact.number);
+      const contactName = getContactName(contact.number, contact);
+      const contactBiz  = getContactBusiness(contact.number);
+      const avatarText  = contactName ? nameInitials(contactName) : contact.number.replace(/\D/g,'').slice(1,4);
+      const displayName = contactName
+        ? (contactBiz ? `${contactName} — ${contactBiz}` : contactName)
+        : formatPhone(contact.number);
 
       return `
         <div class="conv-item" data-number="${contact.number}">
@@ -327,9 +338,10 @@ function openConversation(contactNumber) {
 
   document.getElementById('conversation-list').classList.add('hidden');
   document.getElementById('conversation-detail').classList.remove('hidden');
-  const detailName = extractContactName(contact);
+  const detailName = getContactName(contactNumber, contact);
+  const detailBiz  = getContactBusiness(contactNumber);
   document.getElementById('detail-contact').textContent = detailName
-    ? `${detailName} · ${formatPhone(contactNumber)}`
+    ? `${detailName}${detailBiz ? ' · ' + detailBiz : ''} · ${formatPhone(contactNumber)}`
     : formatPhone(contactNumber);
 
   // Recompute badge for this biz (clear unread count)
@@ -522,42 +534,41 @@ function setupEventListeners() {
   }, 30000);
 }
 
-// === Extract customer name from message history ===
-function extractContactName(contact) {
-  // Look in outbound messages for a personalized name (earliest first — that's our original send)
-  const outbounds = contact.messages
+// === Contact name lookup — CRM first, SMS parse fallback ===
+function getContactName(phoneNumber, contact) {
+  // 1. CRM lookup (source of truth)
+  const crm = crmContacts[phoneNumber];
+  if (crm && crm.name) return crm.name;
+
+  // 2. SMS body parse — first name ONLY (we never send last names in outreach)
+  const outbounds = (contact.messages || [])
     .filter(m => m.direction === 'outbound-api' || m.direction === 'outbound')
     .sort((a, b) => new Date(a.date_created || a.date_sent) - new Date(b.date_created || b.date_sent));
 
   for (const msg of outbounds) {
     if (!msg.body) continue;
-    // "Hey First Last," or "Hey First,"
-    const hey = msg.body.match(/^Hey ([A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+)?)[,!]/);
+    // "Hey Name," pattern
+    const hey = msg.body.match(/^Hey ([A-Z][a-z'-]{1,20})[,!]/);
     if (hey) return hey[1];
-    // "First Last," or "First," at very start
-    const start = msg.body.match(/^([A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+)?),/);
+    // "Name," at very start
+    const start = msg.body.match(/^([A-Z][a-z'-]{1,20}),/);
     if (start) return start[1];
-  }
-
-  // Inbound: caller replies with their name
-  const inbounds = contact.messages
-    .filter(m => m.direction === 'inbound')
-    .sort((a, b) => new Date(a.date_created || a.date_sent) - new Date(b.date_created || b.date_sent));
-
-  for (const msg of inbounds) {
-    if (!msg.body) continue;
-    const m = msg.body.match(/^(?:this is |i'm |i am |my name is |it's )([A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+)?)/i);
-    if (m && m[1].length > 1) return m[1];
   }
 
   return null;
 }
 
-// Returns initials from a full name: "Francisco Martinez" → "FM", "Francisco" → "F"
+// Returns business name from CRM if available
+function getContactBusiness(phoneNumber) {
+  const crm = crmContacts[phoneNumber];
+  return crm && crm.business ? crm.business : null;
+}
+
+// Returns initials from a name: "Francisco" → "F", "Francisco M" → "FM"
 function nameInitials(name) {
   const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  return parts[0].slice(0, 2).toUpperCase();
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return parts[0][0].toUpperCase();
 }
 
 // === Helpers ===
