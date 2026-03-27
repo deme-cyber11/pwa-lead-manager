@@ -287,7 +287,7 @@ async function loadBizData(idx) {
 
       const unread = contact.messages.filter(m => isMessageUnread(m, biz.id, contact.number)).length;
       const contactName = extractContactName(contact);
-      const avatarText = contactName ? contactName.slice(0, 2).toUpperCase() : contact.number.replace(/\D/g,'').slice(1,4);
+      const avatarText = contactName ? nameInitials(contactName) : contact.number.replace(/\D/g,'').slice(1,4);
       const displayName = contactName || formatPhone(contact.number);
 
       return `
@@ -522,33 +522,42 @@ function setupEventListeners() {
   }, 30000);
 }
 
-// === Extract customer name from outbound message body ===
+// === Extract customer name from message history ===
 function extractContactName(contact) {
-  // Look in outbound messages for a personalized name
-  const outbound = contact.messages
+  // Look in outbound messages for a personalized name (earliest first — that's our original send)
+  const outbounds = contact.messages
     .filter(m => m.direction === 'outbound-api' || m.direction === 'outbound')
-    .sort((a, b) => new Date(a.date_created || a.date_sent) - new Date(b.date_created || b.date_sent))[0];
+    .sort((a, b) => new Date(a.date_created || a.date_sent) - new Date(b.date_created || b.date_sent));
 
-  if (outbound && outbound.body) {
-    // "Hey Name," or "Hey Name!" at start
-    const heyMatch = outbound.body.match(/^Hey ([A-Z][a-z'-]+)[,!]/);
-    if (heyMatch) return heyMatch[1];
-    // "Name," at very start (our sequence format)
-    const startMatch = outbound.body.match(/^([A-Z][a-z'-]+),/);
-    if (startMatch) return startMatch[1];
+  for (const msg of outbounds) {
+    if (!msg.body) continue;
+    // "Hey First Last," or "Hey First,"
+    const hey = msg.body.match(/^Hey ([A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+)?)[,!]/);
+    if (hey) return hey[1];
+    // "First Last," or "First," at very start
+    const start = msg.body.match(/^([A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+)?),/);
+    if (start) return start[1];
   }
 
-  // Check inbound messages too — some callers reply with their name
-  const inbound = contact.messages
+  // Inbound: caller replies with their name
+  const inbounds = contact.messages
     .filter(m => m.direction === 'inbound')
-    .sort((a, b) => new Date(a.date_created || a.date_sent) - new Date(b.date_created || b.date_sent))[0];
+    .sort((a, b) => new Date(a.date_created || a.date_sent) - new Date(b.date_created || b.date_sent));
 
-  if (inbound && inbound.body) {
-    const nameMatch = inbound.body.match(/^(?:this is |i'm |i am |my name is )?([A-Z][a-z'-]+)/i);
-    if (nameMatch && nameMatch[1].length > 1) return nameMatch[1];
+  for (const msg of inbounds) {
+    if (!msg.body) continue;
+    const m = msg.body.match(/^(?:this is |i'm |i am |my name is |it's )([A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+)?)/i);
+    if (m && m[1].length > 1) return m[1];
   }
 
   return null;
+}
+
+// Returns initials from a full name: "Francisco Martinez" → "FM", "Francisco" → "F"
+function nameInitials(name) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return parts[0].slice(0, 2).toUpperCase();
 }
 
 // === Helpers ===
