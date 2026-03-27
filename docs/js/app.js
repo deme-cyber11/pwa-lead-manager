@@ -286,13 +286,15 @@ async function loadBizData(idx) {
       }
 
       const unread = contact.messages.filter(m => isMessageUnread(m, biz.id, contact.number)).length;
-      const initials = contact.number.replace(/\D/g,'').slice(1,4) || contact.number.slice(-2);
+      const contactName = extractContactName(contact);
+      const avatarText = contactName ? contactName.slice(0, 2).toUpperCase() : contact.number.replace(/\D/g,'').slice(1,4);
+      const displayName = contactName || formatPhone(contact.number);
 
       return `
         <div class="conv-item" data-number="${contact.number}">
-          <div class="conv-avatar" style="background:${biz.color}">${initials}</div>
+          <div class="conv-avatar" style="background:${biz.color}">${avatarText}</div>
           <div class="conv-info">
-            <div class="conv-name">${formatPhone(contact.number)}</div>
+            <div class="conv-name">${escapeHtml(displayName)}</div>
             <div class="conv-preview">${previewIcon}${escapeHtml(preview.substring(0, 60))}</div>
           </div>
           <div class="conv-meta">
@@ -325,7 +327,10 @@ function openConversation(contactNumber) {
 
   document.getElementById('conversation-list').classList.add('hidden');
   document.getElementById('conversation-detail').classList.remove('hidden');
-  document.getElementById('detail-contact').textContent = formatPhone(contactNumber);
+  const detailName = extractContactName(contact);
+  document.getElementById('detail-contact').textContent = detailName
+    ? `${detailName} · ${formatPhone(contactNumber)}`
+    : formatPhone(contactNumber);
 
   // Recompute badge for this biz (clear unread count)
   const bizConvs = conversations[biz.id] ? Object.values(conversations[biz.id]) : [];
@@ -515,6 +520,35 @@ function setupEventListeners() {
   setInterval(() => {
     if (!document.hidden) loadBizData(currentBiz);
   }, 30000);
+}
+
+// === Extract customer name from outbound message body ===
+function extractContactName(contact) {
+  // Look in outbound messages for a personalized name
+  const outbound = contact.messages
+    .filter(m => m.direction === 'outbound-api' || m.direction === 'outbound')
+    .sort((a, b) => new Date(a.date_created || a.date_sent) - new Date(b.date_created || b.date_sent))[0];
+
+  if (outbound && outbound.body) {
+    // "Hey Name," or "Hey Name!" at start
+    const heyMatch = outbound.body.match(/^Hey ([A-Z][a-z'-]+)[,!]/);
+    if (heyMatch) return heyMatch[1];
+    // "Name," at very start (our sequence format)
+    const startMatch = outbound.body.match(/^([A-Z][a-z'-]+),/);
+    if (startMatch) return startMatch[1];
+  }
+
+  // Check inbound messages too — some callers reply with their name
+  const inbound = contact.messages
+    .filter(m => m.direction === 'inbound')
+    .sort((a, b) => new Date(a.date_created || a.date_sent) - new Date(b.date_created || b.date_sent))[0];
+
+  if (inbound && inbound.body) {
+    const nameMatch = inbound.body.match(/^(?:this is |i'm |i am |my name is )?([A-Z][a-z'-]+)/i);
+    if (nameMatch && nameMatch[1].length > 1) return nameMatch[1];
+  }
+
+  return null;
 }
 
 // === Helpers ===
