@@ -32,6 +32,8 @@ const MISSED_CALL_MESSAGES = {
   '+14064767479': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Billings Radon",
   '+19529007486': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Bloomington Bathroom",
   '+14052813672': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Edmond Bathroom",
+  '+14027714422': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Elkhorn Hardwood NE",
+  '+18137233209': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Pool Resurfacing USA",
 };
 
 // Human-readable site labels for Telegram alerts
@@ -49,7 +51,6 @@ const SITE_LABELS = {
   '+18137233209': 'Pool Directory',
   '+16232949154': 'PHX Pool Resurfacing',
   '+18707713364': 'Jonesboro Tree Pros',
-  // New builds
   '+14695296768': 'McKinney Tree Service',
   '+17207347645': 'Boulder Bathroom Remodeling',
   '+13195285190': 'Cedar Rapids Radon',
@@ -64,9 +65,10 @@ const SITE_LABELS = {
   '+14064767479': 'Billings Radon',
   '+19529007486': 'Bloomington Bathroom',
   '+14052813672': 'Edmond Bathroom',
+  '+14027714422': 'Elkhorn Hardwood NE',
 };
 
-// Website URLs — used to hyperlink alerts so you know which site got the call
+// Website URLs — used to hyperlink alerts
 const SITE_URLS = {
   '+19187232096': 'https://tulsawaterdamagepros.com',
   '+12562159287': 'https://huntsvillehvacpros.com',
@@ -81,20 +83,21 @@ const SITE_URLS = {
   '+18137233209': 'https://poolresurfacingusa.com',
   '+16232949154': 'https://phxpoolresurfacing.com',
   '+18707713364': 'https://jonesborotreepros.com',
-  '+14695296768': 'https://mckinneytreedfw.com',
+  '+14695296768': 'https://ntxtreeexperts.com',
   '+17207347645': 'https://boulderbathroomremodeling.com',
-  '+13195285190': 'https://cedarrapidsradon.com',
-  '+13375482811': 'https://lakecharlestreeservice.com',
-  '+15807811781': 'https://lawtonarbor.com',
-  '+15092367423': 'https://spokanehottubrepair.com',
-  '+12255354918': 'https://batonrougesidingpros.com',
+  '+13195285190': 'https://rimrockradon.com',
+  '+13375482811': 'https://deltatreedoctors.com',
+  '+15807811781': 'https://comanchetreeexperts.com',
+  '+15092367423': 'https://inlandnwhottubs.com',
+  '+12255354918': 'https://redsticksidingandroof.com',
   '+16056405642': 'https://rapidcityradon.com',
-  '+13374920960': 'https://lafayetteseptictank.com',
-  '+17857064425': 'https://topekafoundationrepair.com',
+  '+13374920960': 'https://acadiaseptic.com',
+  '+17857064425': 'https://flinthillsfoundation.com',
   '+13375208573': 'https://lakecharlestileandstone.com',
-  '+14064767479': 'https://billingsradon.com',
-  '+19529007486': 'https://bloomingtondoorbath.com',
+  '+14064767479': 'https://rimrockradon.com',
+  '+19529007486': 'https://bloomingtonbathroomremodeling.com',
   '+14052813672': 'https://edmondbathroomremodeling.com',
+  '+14027714422': 'https://elkhornhardwood.com',
 };
 
 const CORS_HEADERS = {
@@ -105,7 +108,6 @@ const CORS_HEADERS = {
 
 export default {
   async fetch(request, env) {
-    // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS });
     }
@@ -113,7 +115,8 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // ── Twilio webhooks — bypass PIN auth, use webhook secret instead ──
+    // ── Twilio webhooks — no PIN auth required ──
+
     if (path === '/webhook/missed-call' && request.method === 'POST') {
       const secret = url.searchParams.get('secret');
       if (secret !== env.WEBHOOK_SECRET) {
@@ -121,32 +124,45 @@ export default {
       }
       return await handleMissedCall(request, env);
     }
+
     if (path === '/webhook/sms' && request.method === 'POST') {
       return await handleIncomingSMS(request, env);
     }
-    if (path === '/webhook/call' && request.method === 'POST') {
-      return await handleIncomingCall(request, env);
+
+    // ── /webhook/voice — unified call handler with spam filtering + forwarding ──
+    // Used by all 28 numbers. Replaces /webhook/call and /voice endpoints.
+    if (path === '/webhook/voice' && request.method === 'POST') {
+      return await handleVoiceCall(request, env);
     }
+
+    // Legacy aliases — kept for backward compat with call-screen.xml numbers
+    if (path === '/webhook/call' && request.method === 'POST') {
+      return await handleVoiceCall(request, env);
+    }
+    if (path === '/voice' && request.method === 'POST') {
+      return await handleVoiceCall(request, env);
+    }
+
     if (path === '/webhook/whisper') {
       const site = url.searchParams.get('site') || 'Iron Tiger Digital';
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Incoming call: ${site}.</Say></Response>`;
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Incoming call from ${site}. Connecting now.</Say></Response>`;
       return new Response(twiml, { headers: { 'Content-Type': 'text/xml' } });
     }
 
-    // Public health check — no auth, no side effects
+    // Public health check
     if (path === '/health') {
       const tgOk = !!(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID);
       const twOk = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN);
       return json({ ok: true, ts: Date.now(), worker: 'lead-manager-api', telegram: tgOk, twilio: twOk });
     }
 
-    // ── Stripe Checkout — public, called from irontigerdigital.com/checkout.html ──
+    // ── Stripe Checkout ──
     if (path === '/stripe/checkout' && request.method === 'POST') {
       const PRICE_IDS = {
-        premium:    'price_1TDtlcRxpHV3ISsgFfDlERsr', // $250/mo — bathroom remodel, siding, storm damage
-        highticket: 'price_1T7pxWRxpHV3ISsgBkzr3ML5', // $200/mo — HVAC, water damage, pool, septic
-        midrange:   'price_1TDtldRxpHV3ISsg4WjqjU5L', // $150/mo — tree service, hot tub, radon, chimney
-        standard:   'price_1T7pxZRxpHV3ISsgypq9YT32', // $130/mo — pressure washing, epoxy, detailing
+        premium:    'price_1TDtlcRxpHV3ISsgFfDlERsr',
+        highticket: 'price_1T7pxWRxpHV3ISsgBkzr3ML5',
+        midrange:   'price_1TDtldRxpHV3ISsg4WjqjU5L',
+        standard:   'price_1T7pxZRxpHV3ISsgypq9YT32',
       };
       try {
         const body = await request.json();
@@ -186,23 +202,13 @@ export default {
     }
 
     try {
-      if (path === '/messages' && request.method === 'GET') {
-        return await getMessages(url, env);
-      }
-      if (path === '/messages' && request.method === 'POST') {
-        return await sendMessage(request, env);
-      }
-      if (path === '/calls' && request.method === 'GET') {
-        return await getCalls(url, env);
-      }
-      if (path === '/call' && request.method === 'POST') {
-        return await initiateCall(request, env);
-      }
-      if (path === '/push/vapid-key') {
-        return json({ key: env.VAPID_PUBLIC_KEY || '' });
-      }
+      if (path === '/messages' && request.method === 'GET') return await getMessages(url, env);
+      if (path === '/messages' && request.method === 'POST') return await sendMessage(request, env);
+      if (path === '/calls' && request.method === 'GET') return await getCalls(url, env);
+      if (path === '/spam-stats' && request.method === 'GET') return await getSpamStats(env);
+      if (path === '/call' && request.method === 'POST') return await initiateCall(request, env);
+      if (path === '/push/vapid-key') return json({ key: env.VAPID_PUBLIC_KEY || '' });
       if (path === '/push/subscribe' && request.method === 'POST') {
-        // Store subscription in KV if available
         const body = await request.json();
         if (env.PUSH_SUBS) {
           const id = crypto.randomUUID();
@@ -217,7 +223,83 @@ export default {
   }
 };
 
-// === Twilio API Helpers ===
+// ── Voice Call Handler — spam check + press-1 gate + forward ──
+
+async function handleVoiceCall(request, env) {
+  const formData = await request.formData();
+  const from        = formData.get('From') || '';
+  const to          = formData.get('To') || '';
+  const digits      = formData.get('Digits');
+  const callStatus  = formData.get('CallStatus') || '';
+  const workerUrl   = new URL(request.url).origin;
+
+  const siteLabel = SITE_LABELS[to] || to;
+  const siteUrl   = SITE_URLS[to];
+  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
+  const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
+
+  // ── Step 1: Check Nomorobo spam score ──
+  let spamScore = 0;
+  try {
+    const addonsRaw = formData.get('AddOns');
+    if (addonsRaw) {
+      const addons = JSON.parse(addonsRaw);
+      const nomorobo = addons?.results?.nomorobo_spamscore?.result?.status;
+      const score    = addons?.results?.nomorobo_spamscore?.result?.score;
+      if (nomorobo === 'successful' && score === 1) spamScore = 1;
+    }
+  } catch (e) { /* no add-on data, continue */ }
+
+  // Reject confirmed spam immediately — no ring-through, no Telegram noise
+  if (spamScore === 1) {
+    // Increment per-number spam counter in KV (non-blocking)
+    try {
+      if (env.SPAM_LOG) {
+        const key = `spam_count:${to}`;
+        const existing = await env.SPAM_LOG.get(key);
+        await env.SPAM_LOG.put(key, String(existing ? parseInt(existing) + 1 : 1));
+      }
+    } catch (e) { /* non-blocking */ }
+    return twiml(`<Response><Reject/></Response>`);
+  }
+
+  // ── Step 2: Press-1 gate (first hit — no Digits yet) ──
+  if (!digits) {
+    // Alert Telegram that a call is coming in
+    await sendTelegramAlert(env,
+      `📲 <b>Incoming call — ${siteLink}</b>\n📲 ${callerFmt}`
+    );
+
+    const gatherUrl = `${workerUrl}/webhook/voice`;
+    return twiml(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather numDigits="1" action="${gatherUrl}" method="POST" timeout="8">
+    <Say>Thank you for calling ${siteLabel}. To speak with our team, please press 1.</Say>
+  </Gather>
+  <Say>We didn't receive a response. Please call back and press 1 when prompted. Goodbye.</Say>
+  <Hangup/>
+</Response>`);
+  }
+
+  // ── Step 3: Caller pressed a key ──
+  if (digits === '1') {
+    const whisperUrl = encodeURIComponent(`${workerUrl}/webhook/whisper?site=${encodeURIComponent(siteLabel)}`);
+    return twiml(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Connecting you now. Please hold.</Say>
+  <Dial callerId="${to}" timeout="30" action="${workerUrl}/webhook/missed-call?secret=${env.WEBHOOK_SECRET || ''}">
+    <Number url="${workerUrl}/webhook/whisper?site=${encodeURIComponent(siteLabel)}">${COSTA_PHONE}</Number>
+  </Dial>
+  <Say>We're sorry, no one is available right now. Please try again later.</Say>
+  <Hangup/>
+</Response>`);
+  }
+
+  // Pressed wrong key — hang up politely
+  return twiml(`<Response><Say>Thank you for calling. Goodbye.</Say><Hangup/></Response>`);
+}
+
+// ── Twilio API Helpers ──
 
 function twilioAuth(env) {
   return 'Basic ' + btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
@@ -230,9 +312,7 @@ function twilioUrl(env, resource) {
 async function twilioGet(env, resource, params = {}) {
   const url = new URL(twilioUrl(env, resource));
   Object.entries(params).forEach(([k, v]) => { if (v) url.searchParams.set(k, v); });
-  const res = await fetch(url.toString(), {
-    headers: { 'Authorization': twilioAuth(env) }
-  });
+  const res = await fetch(url.toString(), { headers: { 'Authorization': twilioAuth(env) } });
   return res.json();
 }
 
@@ -250,24 +330,18 @@ async function twilioPost(env, resource, body = {}) {
   return res.json();
 }
 
-// === Routes ===
+// ── Routes ──
 
 async function getMessages(url, env) {
   const number = url.searchParams.get('number');
-  const limit = url.searchParams.get('limit') || '50';
-
-  // Fetch both sent and received in parallel
+  const limit  = url.searchParams.get('limit') || '50';
   const [sent, received] = await Promise.all([
     twilioGet(env, 'Messages.json', { From: number, PageSize: limit }),
     twilioGet(env, 'Messages.json', { To: number, PageSize: limit })
   ]);
-
   const all = [...(sent.messages || []), ...(received.messages || [])];
-  // Deduplicate by SID
   const unique = Object.values(Object.fromEntries(all.map(m => [m.sid, m])));
-  // Sort by date descending
   unique.sort((a, b) => new Date(b.date_created) - new Date(a.date_created));
-
   return json({ messages: unique.slice(0, parseInt(limit)) });
 }
 
@@ -279,80 +353,68 @@ async function sendMessage(request, env) {
 
 async function getCalls(url, env) {
   const number = url.searchParams.get('number');
-  const limit = url.searchParams.get('limit') || '50';
-
+  const limit  = url.searchParams.get('limit') || '50';
   const [fromCalls, toCalls] = await Promise.all([
     twilioGet(env, 'Calls.json', { From: number, PageSize: limit }),
     twilioGet(env, 'Calls.json', { To: number, PageSize: limit })
   ]);
-
   const all = [...(fromCalls.calls || []), ...(toCalls.calls || [])];
   const unique = Object.values(Object.fromEntries(all.map(c => [c.sid, c])));
   unique.sort((a, b) => new Date(b.date_created) - new Date(a.date_created));
 
-  return json({ calls: unique.slice(0, parseInt(limit)) });
+  // Attach spam_blocked count so dashboard can show accurate call volume
+  let spamBlocked = 0;
+  try {
+    if (env.SPAM_LOG && number) {
+      const val = await env.SPAM_LOG.get(`spam_count:${number}`);
+      spamBlocked = val ? parseInt(val) : 0;
+    }
+  } catch (e) { /* non-blocking */ }
+
+  return json({ calls: unique.slice(0, parseInt(limit)), spam_blocked: spamBlocked });
 }
 
 async function initiateCall(request, env) {
   const { from, to } = await request.json();
-  // Twilio calls Costa first, then connects to customer
-  const twiml = `<Response><Dial callerId="${from}"><Number>${to}</Number></Dial></Response>`;
-  const result = await twilioPost(env, 'Calls.json', {
-    From: from,
-    To: COSTA_PHONE,
-    Twiml: twiml
-  });
+  const twimlStr = `<Response><Dial callerId="${from}"><Number>${to}</Number></Dial></Response>`;
+  const result = await twilioPost(env, 'Calls.json', { From: from, To: COSTA_PHONE, Twiml: twimlStr });
   return json(result);
 }
 
-// === Webhooks (for push notifications) ===
+// ── Webhooks ──
 
 async function handleIncomingSMS(request, env) {
   const formData = await request.formData();
   const from = formData.get('From');
-  const to = formData.get('To');
+  const to   = formData.get('To');
   const body = formData.get('Body');
-
-  // Site label lookup
   const siteLabel = SITE_LABELS[to] || to;
-
   await sendTelegramAlert(env,
     `💬 <b>New SMS — ${siteLabel}</b>\nFrom: ${from}\n\n${body?.substring(0, 300) || '(no body)'}`
   );
-
-  // Return empty TwiML (SMS auto-replies handled elsewhere)
-  return new Response('<Response></Response>', {
-    headers: { 'Content-Type': 'text/xml' }
-  });
+  return new Response('<Response></Response>', { headers: { 'Content-Type': 'text/xml' } });
 }
 
 async function handleMissedCall(request, env) {
-  const formData = await request.formData();
+  const formData  = await request.formData();
   const callStatus = formData.get('CallStatus');
-  const from       = formData.get('From');   // caller's number
-  const to         = formData.get('To');     // our Twilio number
+  const from       = formData.get('From');
+  const to         = formData.get('To');
 
   const missedStatuses = ['no-answer', 'busy', 'canceled', 'failed'];
   if (!missedStatuses.includes(callStatus)) {
     return new Response('OK', { status: 200 });
   }
 
-  // Look up tailored message for this number
   const message = MISSED_CALL_MESSAGES[to] ||
     "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
 
-  // Send SMS to the caller
-  await twilioPost(env, 'Messages.json', {
-    From: to,    // reply from the same site number they called
-    To:   from,  // back to the caller
-    Body: message,
-  });
+  await twilioPost(env, 'Messages.json', { From: to, To: from, Body: message });
 
-  // Telegram alert — customer number prominent for easy callback, no Twilio number shown
-  const siteLabel  = SITE_LABELS[to] || to;
-  const siteUrl    = SITE_URLS[to];
-  const siteLink   = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
-  const callerFmt  = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
+  const siteLabel = SITE_LABELS[to] || to;
+  const siteUrl   = SITE_URLS[to];
+  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
+  const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
   await sendTelegramAlert(env,
     `📞 <b>Missed call — ${siteLink}</b>\n📲 ${callerFmt}\n✅ Auto-text sent`
   );
@@ -360,47 +422,49 @@ async function handleMissedCall(request, env) {
   return new Response('OK', { status: 200 });
 }
 
-async function handleIncomingCall(request, env) {
-  const formData = await request.formData();
-  const from = formData.get('From');
-  const to   = formData.get('To');
-  const callStatus = formData.get('CallStatus');
+// ── Spam Stats ──
 
-  if (callStatus === 'ringing') {
-    const siteLabel = SITE_LABELS[to] || to;
-    const siteUrl   = SITE_URLS[to];
-    const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
-    const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
-    await sendTelegramAlert(env,
-      `📲 <b>Incoming call — ${siteLink}</b>\n📲 ${callerFmt}`
-    );
+async function getSpamStats(env) {
+  const allNumbers = Object.keys(SITE_LABELS);
+  const counts = {};
+  let total = 0;
+  if (env.SPAM_LOG) {
+    await Promise.all(allNumbers.map(async (num) => {
+      try {
+        const val = await env.SPAM_LOG.get(`spam_count:${num}`);
+        if (val) {
+          counts[num] = { label: SITE_LABELS[num], count: parseInt(val) };
+          total += parseInt(val);
+        }
+      } catch (e) { /* skip */ }
+    }));
   }
-
-  // Return empty TwiML (call forwarding handled by Twilio config)
-  return new Response('<Response></Response>', {
-    headers: { 'Content-Type': 'text/xml' }
-  });
+  return json({ spam_counts: counts, total });
 }
 
+// ── Helpers ──
+
 async function sendTelegramAlert(env, message) {
-  const token = env.TELEGRAM_BOT_TOKEN;
+  const token  = env.TELEGRAM_BOT_TOKEN;
   const chatId = env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) return;
   try {
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML', disable_web_page_preview: true })
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      })
     });
   } catch (e) { /* silent fail */ }
 }
 
-async function sendPushToAll(env, payload) {
-  // Web push disabled — broken without VAPID signing
-  // Telegram alerts are the primary notification channel
+function twiml(xml) {
+  return new Response(xml, { headers: { 'Content-Type': 'text/xml' } });
 }
-
-// === Util ===
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {

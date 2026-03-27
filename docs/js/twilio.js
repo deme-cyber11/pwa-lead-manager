@@ -56,5 +56,10 @@ const TwilioAPI = (() => {
     return request('/push/vapid-key');
   }
 
-  return { init, getMessages, sendMessage, getCalls, initiateCall, registerPush, getVapidKey };
+  // Get spam blocked counts across all numbers
+  async function getSpamStats() {
+    return request('/spam-stats');
+  }
+
+  return { init, getMessages, sendMessage, getCalls, initiateCall, registerPush, getVapidKey, getSpamStats };
 })();

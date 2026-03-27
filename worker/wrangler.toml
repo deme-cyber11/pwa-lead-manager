@@ -6,3 +6,7 @@ account_id = "666e858af8609cfce121751955534e7d"
 [vars]
 # TWILIO_ACCOUNT_SID is set via: wrangler secret put TWILIO_ACCOUNT_SID
 # Or set as an env var and it will be available as env.TWILIO_ACCOUNT_SID
+
+[[kv_namespaces]]
+binding = "SPAM_LOG"
+id = "6bfe2a37d25e4107bfa3cd276d1be5cf"

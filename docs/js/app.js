@@ -2,19 +2,36 @@
 const WORKER_URL = 'https://lead-manager-api.irontigerdigital.workers.dev';
 
 const BUSINESSES = [
-  { id: 'phxpool',   name: 'PHX Pool Resurfacing',  short: 'PHX Pool',  number: '+16232949154', color: '#06b6d4' },
-  { id: 'sapool',    name: 'SA Pool Resurfacing',    short: 'SA Pool',   number: '+17262685597', color: '#0ea5e9' },
-  { id: 'spokane',   name: 'Spokane Hardwood',       short: 'Spokane',   number: '+15094619375', color: '#c8a45a' },
-  { id: 'elkhorn',   name: 'Elkhorn Hardwood',       short: 'Elkhorn',   number: '+17192158962', color: '#8B4513' },
-  { id: 'peak',      name: 'Peak Shine Detailing',   short: 'Peak Shine',number: '+14235891682', color: '#a855f7' },
-  { id: 'knox',      name: 'Knox Pressure',          short: 'Knox',      number: '+18653788377', color: '#22c55e' },
-  { id: 'springs',   name: 'Springs Mold',           short: 'Springs',   number: '+17194968287', color: '#f97316' },
-  { id: 'huntsville',name: 'Huntsville HVAC',        short: 'Huntsville',number: '+12562159287', color: '#9333ea' },
-  { id: 'tampa',     name: 'Tampa Concrete',         short: 'Tampa',     number: '+18137059021', color: '#4a90d9' },
-  { id: 'jax',       name: 'Jacksonville Epoxy',     short: 'Jax Epoxy', number: '+19042044753', color: '#f59e0b' },
-  { id: 'jonesboro', name: 'Jonesboro Tree Pros',    short: 'Jonesboro', number: '+18707713364', color: '#16a34a' },
-  { id: 'tulsa',     name: 'Tulsa Water Damage',     short: 'Tulsa',     number: '+19187232096', color: '#dc2626' },
-  { id: 'poolusa',   name: 'Pool Resurfacing USA',   short: 'Pool USA',  number: '+18137233209', color: '#1d4ed8' },
+  // Legacy live sites
+  { id: 'phxpool',     name: 'PHX Pool Resurfacing',          short: 'PHX Pool',     number: '+16232949154', color: '#06b6d4' },
+  { id: 'sapool',      name: 'SA Pool Resurfacing',           short: 'SA Pool',      number: '+17262685597', color: '#0ea5e9' },
+  { id: 'spokane',     name: 'Selkirk Hardwood',              short: 'Selkirk',      number: '+15094619375', color: '#c8a45a' },
+  { id: 'elkhorn',     name: 'Elkhorn Hardwood',              short: 'Elkhorn',      number: '+17192158962', color: '#8B4513' },
+  { id: 'peak',        name: 'Peak Shine Detailing',          short: 'Peak Shine',   number: '+14235891682', color: '#a855f7' },
+  { id: 'knox',        name: 'Knox Pressure',                 short: 'Knox',         number: '+18653788377', color: '#22c55e' },
+  { id: 'springs',     name: 'Springs Mold',                  short: 'Springs',      number: '+17194968287', color: '#f97316' },
+  { id: 'huntsville',  name: 'Huntsville HVAC',               short: 'Huntsville',   number: '+12562159287', color: '#9333ea' },
+  { id: 'tampa',       name: 'Tampa Concrete',                short: 'Tampa',        number: '+18137059021', color: '#4a90d9' },
+  { id: 'jax',         name: 'Jacksonville Epoxy',            short: 'Jax Epoxy',    number: '+19042044753', color: '#f59e0b' },
+  { id: 'tulsa',       name: 'Tulsa Water Damage',            short: 'Tulsa',        number: '+19187232096', color: '#dc2626' },
+  { id: 'poolusa',     name: 'Pool Resurfacing USA',          short: 'Pool USA',     number: '+18137233209', color: '#1d4ed8' },
+  // New builds
+  { id: 'jonesboro',   name: 'Delta Tree Doctors',            short: 'Delta Tree',   number: '+18707713364', color: '#16a34a' },
+  { id: 'mckinney',    name: 'NTX Tree Experts',              short: 'NTX Tree',     number: '+14695296768', color: '#15803d' },
+  { id: 'boulder',     name: 'Boulder Bathroom Remodeling',   short: 'Boulder Bath', number: '+17207347645', color: '#7c3aed' },
+  { id: 'cedarrapids', name: 'Five Seasons Radon',            short: 'Five Seasons', number: '+13195285190', color: '#0891b2' },
+  { id: 'lakecharles', name: 'Contraband Bayou Tree',         short: 'CB Tree',      number: '+13375482811', color: '#166534' },
+  { id: 'lawton',      name: 'Comanche Tree Experts',         short: 'Comanche',     number: '+15807811781', color: '#14532d' },
+  { id: 'spokane_htub',name: 'Inland NW Hot Tubs',            short: 'Inland NW',    number: '+15092367423', color: '#0369a1' },
+  { id: 'batonrouge',  name: 'Red Stick Siding & Roof',       short: 'Red Stick',    number: '+12255354918', color: '#b91c1c' },
+  { id: 'rapidcity',   name: 'Badlands Radon',                short: 'Badlands',     number: '+16056405642', color: '#78716c' },
+  { id: 'lafayette',   name: 'Bayou Teche Septic',            short: 'Bayou Teche',  number: '+13374920960', color: '#65a30d' },
+  { id: 'topeka',      name: 'Flint Hills Foundation',        short: 'Flint Hills',  number: '+17857064425', color: '#92400e' },
+  { id: 'lkcbath',     name: 'Lake Charles Tile & Stone',     short: 'LC Tile',      number: '+13375208573', color: '#be185d' },
+  { id: 'billings',    name: 'Rim Rock Radon',                short: 'Rim Rock',     number: '+14064767479', color: '#6d28d9' },
+  { id: 'bloomington', name: 'Bloomington Bathroom',          short: 'Bloomington',  number: '+19529007486', color: '#0f766e' },
+  { id: 'edmond',      name: 'Scissortail Bath',              short: 'Scissortail',  number: '+14052813672', color: '#c2410c' },
+  { id: 'elkhorn_ne',  name: 'Elkhorn Hardwood NE',           short: 'Elkhorn NE',   number: '+14027714422', color: '#a16207' },
 ];
 
 // === State ===
@@ -205,6 +222,18 @@ async function loadBizData(idx) {
 
     const messages = msgData.messages || [];
     const calls = callData.calls || [];
+    const spamBlocked = callData.spam_blocked || 0;
+
+    // Show spam indicator in header if any spam was blocked
+    const spamBadge = document.getElementById('spam-badge');
+    if (spamBadge) {
+      if (spamBlocked > 0) {
+        spamBadge.textContent = `🚫 ${spamBlocked} spam blocked`;
+        spamBadge.classList.remove('hidden');
+      } else {
+        spamBadge.classList.add('hidden');
+      }
+    }
 
     // Group messages by contact number
     const contactMap = {};
