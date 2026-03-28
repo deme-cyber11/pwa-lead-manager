@@ -33,6 +33,7 @@ const MISSED_CALL_MESSAGES = {
   '+19529007486': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Bloomington Bathroom",
   '+14052813672': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Edmond Bathroom",
   '+14027714422': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Elkhorn Hardwood NE",
+  '+18507263411': "Hey, I'm sorry I missed your call! Is it a brake job, diagnostics, battery, or something else? Reply with what you need and I'll get right back to you. — Costa | Tally Mobile Mechanic",
   '+18137233209': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Pool Resurfacing USA",
 };
 
@@ -66,6 +67,7 @@ const SITE_LABELS = {
   '+19529007486': 'Bloomington Bathroom',
   '+14052813672': 'Edmond Bathroom',
   '+14027714422': 'Elkhorn Hardwood NE',
+  '+18507263411': 'Tally Mobile Mechanic',
 };
 
 // Website URLs — used to hyperlink alerts
@@ -98,6 +100,7 @@ const SITE_URLS = {
   '+19529007486': 'https://bloomingtonbathroomremodeling.com',
   '+14052813672': 'https://edmondbathroomremodeling.com',
   '+14027714422': 'https://elkhornhardwood.com',
+  '+18507263411': 'https://tallymobilemechanic.com',
 };
 
 const CORS_HEADERS = {

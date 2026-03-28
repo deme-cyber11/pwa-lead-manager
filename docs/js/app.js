@@ -32,6 +32,7 @@ const BUSINESSES = [
   { id: 'bloomington', name: 'Bloomington Bathroom',          short: 'Bloomington',  number: '+19529007486', color: '#0f766e' },
   { id: 'edmond',      name: 'Scissortail Bath',              short: 'Scissortail',  number: '+14052813672', color: '#c2410c' },
   { id: 'elkhorn_ne',  name: 'Elkhorn Hardwood NE',           short: 'Elkhorn NE',   number: '+14027714422', color: '#a16207' },
+  { id: 'tally',       name: 'Tally Mobile Mechanic',         short: 'Tally Mech',   number: '+18507263411', color: '#0f4c81' },
 ];
 
 // === State ===
