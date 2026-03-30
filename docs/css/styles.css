@@ -106,10 +106,12 @@ html, body {
 #biz-tabs {
   display: flex;
   overflow-x: auto;
+  overflow-y: visible;
   background: var(--bg2);
   border-bottom: 1px solid var(--bg3);
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
 }
 #biz-tabs::-webkit-scrollbar { display: none; }
 
