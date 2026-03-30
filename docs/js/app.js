@@ -257,9 +257,11 @@ async function loadBizData(idx) {
       if (!contactMap[key].lastActivity || d > contactMap[key].lastActivity) contactMap[key].lastActivity = d;
     });
 
+    const COSTA_PERSONAL = '+17344761457'; // Never show on dashboard — Costa's personal callback number
     calls.forEach(call => {
       const contact = call.direction === 'inbound' ? call.from : call.to;
       if (contact === biz.number) return;
+      if (contact === COSTA_PERSONAL) return; // Skip Costa's own outbound callbacks
       const key = contact;
       if (!contactMap[key]) contactMap[key] = { number: contact, messages: [], calls: [], lastActivity: null };
       contactMap[key].calls.push(call);
