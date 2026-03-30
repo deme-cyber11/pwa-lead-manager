@@ -138,6 +138,14 @@ export default {
       return await handleVoiceCall(request, env);
     }
 
+    // ── /webhook/call-status — fires for EVERY call completion (configured via
+    // StatusCallback on each Twilio number). Catches callers who hang up during
+    // the press-1 IVR before the <Dial> ever fires. Short calls (<30s) with no
+    // forwarded-call record in KV get a missed-call SMS.
+    if (path === '/webhook/call-status' && request.method === 'POST') {
+      return await handleCallStatus(request, env);
+    }
+
     // Legacy aliases — kept for backward compat with call-screen.xml numbers
     if (path === '/webhook/call' && request.method === 'POST') {
       return await handleVoiceCall(request, env);
@@ -287,7 +295,15 @@ async function handleVoiceCall(request, env) {
 
   // ── Step 3: Caller pressed a key ──
   if (digits === '1') {
-    const whisperUrl = encodeURIComponent(`${workerUrl}/webhook/whisper?site=${encodeURIComponent(siteLabel)}`);
+    // Record this callSid as "forwarded to Costa" so the call-status handler
+    // doesn't also fire a missed-call SMS (avoid double-send).
+    const callSid = formData.get('CallSid') || '';
+    if (callSid && env.SPAM_LOG) {
+      try {
+        await env.SPAM_LOG.put(`forwarded:${callSid}`, '1', { expirationTtl: 3600 });
+      } catch (e) { /* non-blocking */ }
+    }
+
     return twiml(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say>Connecting you now. Please hold.</Say>
@@ -301,6 +317,56 @@ async function handleVoiceCall(request, env) {
 
   // Pressed wrong key — hang up politely
   return twiml(`<Response><Say>Thank you for calling. Goodbye.</Say><Hangup/></Response>`);
+}
+
+// ── Call Status Callback — catches IVR hang-ups ──────────────────────────────
+// Fires for every call completion when StatusCallback is configured on the
+// Twilio number. Sends missed-call SMS if:
+//   1. Call duration < 30 seconds (hung up during IVR before pressing 1), AND
+//   2. No "forwarded:{callSid}" flag in KV (caller pressed 1 and got through), AND
+//   3. Call was not already handled by the <Dial> missed-call action
+async function handleCallStatus(request, env) {
+  const formData    = await request.formData();
+  const callStatus  = formData.get('CallStatus') || '';
+  const callSid     = formData.get('CallSid')    || '';
+  const from        = formData.get('From')        || '';
+  const to          = formData.get('To')          || '';
+  const duration    = parseInt(formData.get('CallDuration') || '0', 10);
+
+  // Only act on completed calls
+  if (callStatus !== 'completed') {
+    return new Response('OK', { status: 200 });
+  }
+
+  // If call lasted 30+ seconds, caller likely reached Costa — skip
+  if (duration >= 30) {
+    return new Response('OK', { status: 200 });
+  }
+
+  // If we already forwarded this call to Costa via press-1, skip
+  // (the <Dial> action / handleMissedCall will handle it)
+  if (callSid && env.SPAM_LOG) {
+    try {
+      const forwarded = await env.SPAM_LOG.get(`forwarded:${callSid}`);
+      if (forwarded) return new Response('OK', { status: 200 });
+    } catch (e) { /* non-blocking — if KV fails, proceed */ }
+  }
+
+  // Short call, not forwarded — caller bailed during IVR. Send missed-call SMS.
+  const message = MISSED_CALL_MESSAGES[to] ||
+    "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
+
+  await twilioPost(env, 'Messages.json', { From: to, To: from, Body: message });
+
+  const siteLabel = SITE_LABELS[to]  || to;
+  const siteUrl   = SITE_URLS[to];
+  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
+  const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
+  await sendTelegramAlert(env,
+    `📞 <b>Short call (IVR drop) — ${siteLink}</b>\n📲 ${callerFmt} · ${duration}s\n✅ Auto-text sent`
+  );
+
+  return new Response('OK', { status: 200 });
 }
 
 // ── Twilio API Helpers ──
