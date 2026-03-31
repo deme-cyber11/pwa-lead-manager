@@ -301,7 +301,7 @@ async function handleVoiceCall(request, env) {
 
   return twiml(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Dial callerId="${to}" timeout="30" action="${workerUrl}/webhook/missed-call?secret=${env.WEBHOOK_SECRET || ''}&amp;site=${encodeURIComponent(siteLabel)}&amp;to=${encodeURIComponent(to)}">
+  <Dial callerId="${from}" timeout="30" action="${workerUrl}/webhook/missed-call?secret=${env.WEBHOOK_SECRET || ''}&amp;site=${encodeURIComponent(siteLabel)}&amp;to=${encodeURIComponent(to)}">
     <Number url="${workerUrl}/webhook/whisper?site=${encodeURIComponent(siteLabel)}">${COSTA_PHONE}</Number>
   </Dial>
 </Response>`);
