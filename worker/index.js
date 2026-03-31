@@ -238,6 +238,11 @@ export default {
   }
 };
 
+// Manual call blocklist — known spam/robocallers that bypass Nomorobo
+const BLOCKED_CALLERS = new Set([
+  '+12252300428',  // Angi's List robocall — 2026-03-31
+]);
+
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
 
 async function handleVoiceCall(request, env) {
@@ -251,6 +256,11 @@ async function handleVoiceCall(request, env) {
   const siteUrl   = SITE_URLS[to];
   const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
   const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
+
+  // ── Step 0: Manual blocklist check ──
+  if (BLOCKED_CALLERS.has(from)) {
+    return twiml(`<Response><Reject/></Response>`);
+  }
 
   // ── Step 1: Check Nomorobo spam score ──
   let spamScore = 0;
