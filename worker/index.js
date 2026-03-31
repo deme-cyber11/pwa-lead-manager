@@ -337,6 +337,16 @@ async function handleCallStatus(request, env) {
   // Note: handleMissedCall (via <Dial> action) fires for true no-answer/busy.
   // This catches the voicemail case where DialCallStatus = 'completed' (voicemail answered).
 
+  // Check if handleMissedCall already sent SMS for this call (dedup)
+  if (callSid && env.SPAM_LOG) {
+    try {
+      const alreadySent = await env.SPAM_LOG.get(`missed_sms:${callSid}`);
+      if (alreadySent) {
+        return new Response('OK', { status: 200 }); // already handled
+      }
+    } catch (e) { /* non-blocking, proceed with send */ }
+  }
+
   // Short call — send missed-call SMS.
   const message = MISSED_CALL_MESSAGES[to] ||
     "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
@@ -484,6 +494,14 @@ async function handleMissedCall(request, env) {
     "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
 
   await twilioPost(env, 'Messages.json', { From: to, To: from, Body: message });
+
+  // Mark that we already sent SMS for this call — prevents handleCallStatus from double-sending
+  const callSid = formData.get('CallSid') || '';
+  if (callSid && env.SPAM_LOG) {
+    try {
+      await env.SPAM_LOG.put(`missed_sms:${callSid}`, '1', { expirationTtl: 3600 });
+    } catch (e) { /* non-blocking */ }
+  }
 
   // Alert Costa on Telegram
   const siteUrl   = SITE_URLS[to];
