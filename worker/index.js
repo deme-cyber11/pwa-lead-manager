@@ -347,19 +347,25 @@ async function handleCallStatus(request, env) {
     } catch (e) { /* non-blocking, proceed with send */ }
   }
 
-  // Short call — send missed-call SMS.
-  const message = MISSED_CALL_MESSAGES[to] ||
-    "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
-
-  await twilioPost(env, 'Messages.json', { From: to, To: from, Body: message });
-
+  // Alert Telegram (call info only — no auto-text confirmation)
   const siteLabel = SITE_LABELS[to]  || to;
   const siteUrl   = SITE_URLS[to];
   const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
   const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
   await sendTelegramAlert(env,
-    `📞 <b>Short call (IVR drop) — ${siteLink}</b>\n📲 ${callerFmt} · ${duration}s\n✅ Auto-text sent`
+    `📞 <b>Short call — ${siteLink}</b>\n📲 ${callerFmt} · ${duration}s`
   );
+
+  // Skip SMS for blocked callers
+  if (BLOCKED_CALLERS.has(from)) {
+    return new Response('OK', { status: 200 });
+  }
+
+  // Short call — send missed-call SMS.
+  const message = MISSED_CALL_MESSAGES[to] ||
+    "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
+
+  await twilioPost(env, 'Messages.json', { From: to, To: from, Body: message });
 
   return new Response('OK', { status: 200 });
 }
@@ -489,6 +495,20 @@ async function handleMissedCall(request, env) {
       { headers: { 'Content-Type': 'text/xml' } });
   }
 
+  // Alert Costa on Telegram (calls only — no auto-text confirmation)
+  const siteUrl   = SITE_URLS[to];
+  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
+  const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
+  await sendTelegramAlert(env,
+    `📞 <b>Missed call — ${siteLink}</b>\n📲 ${callerFmt}`
+  );
+
+  // Skip SMS for blocked callers
+  if (BLOCKED_CALLERS.has(from)) {
+    return new Response('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+      { headers: { 'Content-Type': 'text/xml' } });
+  }
+
   // Send SMS to caller
   const message = MISSED_CALL_MESSAGES[to] ||
     "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
@@ -502,14 +522,6 @@ async function handleMissedCall(request, env) {
       await env.SPAM_LOG.put(`missed_sms:${callSid}`, '1', { expirationTtl: 3600 });
     } catch (e) { /* non-blocking */ }
   }
-
-  // Alert Costa on Telegram
-  const siteUrl   = SITE_URLS[to];
-  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
-  const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
-  await sendTelegramAlert(env,
-    `📞 <b>Missed call — ${siteLink}</b>\n📲 ${callerFmt}\n✅ Auto-text sent`
-  );
 
   // Play a voice message to the caller instead of dead air
   return new Response(`<?xml version="1.0" encoding="UTF-8"?>
