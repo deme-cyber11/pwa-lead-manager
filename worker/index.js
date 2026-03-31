@@ -242,6 +242,7 @@ export default {
 const BLOCKED_CALLERS = new Set([
   '+12252300428',  // Angi's List robocall — 2026-03-31
   '+17254856981',  // spam — Knox Pressure — 2026-03-31
+  '+12393967331',  // spam — SA Pool — 2026-03-31
 ]);
 
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
