@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lead-mgr-v4';
+const CACHE_NAME = 'lead-mgr-v5';
 const ASSETS = [
   './',
   './index.html',

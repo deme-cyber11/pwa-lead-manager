@@ -35,6 +35,7 @@ const MISSED_CALL_MESSAGES = {
   '+14027714422': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Elkhorn Hardwood NE",
   '+18507263411': "Hey, I'm sorry I missed your call! Is it a brake job, diagnostics, battery, or something else? Reply with what you need and I'll get right back to you. — Costa | Tally Mobile Mechanic",
   '+18137233209': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Pool Resurfacing USA",
+  '+14073262707': "Hey, I'm sorry I missed your call! Is it a driveway, patio, or pool deck? Please reply with what you need and your address and I'll get right back to you. — Costa | Orlando Concrete Driveway",
 };
 
 // Human-readable site labels for Telegram alerts
@@ -50,6 +51,7 @@ const SITE_LABELS = {
   '+17192158962': 'Elkhorn Hardwood',
   '+15094619375': 'Selkirk Hardwood',
   '+18137233209': 'Pool Directory',
+  '+14073262707': 'Orlando Concrete Driveway',
   '+16232949154': 'PHX Pool Resurfacing',
   '+18707713364': 'Delta Tree Doctors',
   '+14695296768': 'McKinney Tree Service',
@@ -101,6 +103,7 @@ const SITE_URLS = {
   '+14052813672': 'https://edmondbathroomremodeling.com',
   '+14027714422': 'https://elkhornhardwood.com',
   '+18507263411': 'https://tallymobilemechanic.com',
+  '+14073262707': 'https://orlandoconcretedriveway.com',
 };
 
 const CORS_HEADERS = {
@@ -139,9 +142,9 @@ export default {
     }
 
     // ── /webhook/call-status — fires for EVERY call completion (configured via
-    // StatusCallback on each Twilio number). Catches callers who hang up during
-    // the press-1 IVR before the <Dial> ever fires. Short calls (<30s) with no
-    // forwarded-call record in KV get a missed-call SMS.
+    // StatusCallback on each Twilio number). Catches edge cases where forwarded
+    // flag wasn't set (e.g. KV write failed). Short calls (<30s) with no
+    // forwarded-call record in KV get a missed-call SMS as a fallback.
     if (path === '/webhook/call-status' && request.method === 'POST') {
       return await handleCallStatus(request, env);
     }
@@ -235,15 +238,14 @@ export default {
   }
 };
 
-// ── Voice Call Handler — spam check + press-1 gate + forward ──
+// ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
 
 async function handleVoiceCall(request, env) {
   const formData = await request.formData();
-  const from        = formData.get('From') || '';
-  const to          = formData.get('To') || '';
-  const digits      = formData.get('Digits');
-  const callStatus  = formData.get('CallStatus') || '';
-  const workerUrl   = new URL(request.url).origin;
+  const from      = formData.get('From') || '';
+  const to        = formData.get('To') || '';
+  const callSid   = formData.get('CallSid') || '';
+  const workerUrl = new URL(request.url).origin;
 
   const siteLabel = SITE_LABELS[to] || to;
   const siteUrl   = SITE_URLS[to];
@@ -264,7 +266,6 @@ async function handleVoiceCall(request, env) {
 
   // Reject confirmed spam immediately — no ring-through, no Telegram noise
   if (spamScore === 1) {
-    // Increment per-number spam counter in KV (non-blocking)
     try {
       if (env.SPAM_LOG) {
         const key = `spam_count:${to}`;
@@ -275,56 +276,32 @@ async function handleVoiceCall(request, env) {
     return twiml(`<Response><Reject/></Response>`);
   }
 
-  // ── Step 2: Press-1 gate (first hit — no Digits yet) ──
-  if (!digits) {
-    // Alert Telegram that a call is coming in
-    await sendTelegramAlert(env,
-      `📲 <b>Incoming call — ${siteLink}</b>\n📲 ${callerFmt}`
-    );
+  // ── Step 2: Alert Telegram + forward directly ──
+  await sendTelegramAlert(env,
+    `📲 <b>Incoming call — ${siteLink}</b>\n📲 ${callerFmt}`
+  );
 
-    const gatherUrl = `${workerUrl}/webhook/voice`;
-    return twiml(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather numDigits="1" action="${gatherUrl}" method="POST" timeout="8">
-    <Say>Thank you for calling ${siteLabel}. To speak with our team, please press 1.</Say>
-  </Gather>
-  <Say>We didn't receive a response. Please call back and press 1 when prompted. Goodbye.</Say>
-  <Hangup/>
-</Response>`);
+  // Mark as forwarded BEFORE dialing so handleCallStatus doesn't double-send
+  // a missed-call SMS if the call ends quickly (caller hangs up while ringing).
+  if (callSid && env.SPAM_LOG) {
+    try {
+      await env.SPAM_LOG.put(`forwarded:${callSid}`, '1', { expirationTtl: 3600 });
+    } catch (e) { /* non-blocking */ }
   }
 
-  // ── Step 3: Caller pressed a key ──
-  if (digits === '1') {
-    // Record this callSid as "forwarded to Costa" so the call-status handler
-    // doesn't also fire a missed-call SMS (avoid double-send).
-    const callSid = formData.get('CallSid') || '';
-    if (callSid && env.SPAM_LOG) {
-      try {
-        await env.SPAM_LOG.put(`forwarded:${callSid}`, '1', { expirationTtl: 3600 });
-      } catch (e) { /* non-blocking */ }
-    }
-
-    return twiml(`<?xml version="1.0" encoding="UTF-8"?>
+  return twiml(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Connecting you now. Please hold.</Say>
-  <Dial callerId="${to}" timeout="30" action="${workerUrl}/webhook/missed-call?secret=${env.WEBHOOK_SECRET || ''}">
+  <Dial callerId="${to}" timeout="30" action="${workerUrl}/webhook/missed-call?secret=${env.WEBHOOK_SECRET || ''}&amp;site=${encodeURIComponent(siteLabel)}&amp;to=${encodeURIComponent(to)}">
     <Number url="${workerUrl}/webhook/whisper?site=${encodeURIComponent(siteLabel)}">${COSTA_PHONE}</Number>
   </Dial>
-  <Say>We're sorry, no one is available right now. Please try again later.</Say>
-  <Hangup/>
 </Response>`);
-  }
-
-  // Pressed wrong key — hang up politely
-  return twiml(`<Response><Say>Thank you for calling. Goodbye.</Say><Hangup/></Response>`);
 }
 
-// ── Call Status Callback — catches IVR hang-ups ──────────────────────────────
-// Fires for every call completion when StatusCallback is configured on the
-// Twilio number. Sends missed-call SMS if:
-//   1. Call duration < 30 seconds (hung up during IVR before pressing 1), AND
-//   2. No "forwarded:{callSid}" flag in KV (caller pressed 1 and got through), AND
-//   3. Call was not already handled by the <Dial> missed-call action
+// ── Call Status Callback — backup catch for short/dropped calls ──────────────
+// Fires for every call completion via StatusCallback. Sends missed-call SMS if:
+//   1. Call duration < 90 seconds (likely dropped or hit voicemail), AND
+//   2. No "forwarded:{callSid}" flag in KV (call never reached Costa), AND
+//   3. Primary handler (handleMissedCall via <Dial> action) didn't already fire
 async function handleCallStatus(request, env) {
   const formData    = await request.formData();
   const callStatus  = formData.get('CallStatus') || '';
@@ -338,21 +315,17 @@ async function handleCallStatus(request, env) {
     return new Response('OK', { status: 200 });
   }
 
-  // If call lasted 30+ seconds, caller likely reached Costa — skip
-  if (duration >= 30) {
+  // If call lasted 90+ seconds, caller had a real conversation — skip
+  if (duration >= 90) {
     return new Response('OK', { status: 200 });
   }
 
-  // If we already forwarded this call to Costa via press-1, skip
-  // (the <Dial> action / handleMissedCall will handle it)
-  if (callSid && env.SPAM_LOG) {
-    try {
-      const forwarded = await env.SPAM_LOG.get(`forwarded:${callSid}`);
-      if (forwarded) return new Response('OK', { status: 200 });
-    } catch (e) { /* non-blocking — if KV fails, proceed */ }
-  }
+  // If forwarded AND short duration, call likely went to voicemail — send SMS anyway.
+  // Only skip if it was forwarded AND a real conversation (>=90s, caught above).
+  // Note: handleMissedCall (via <Dial> action) fires for true no-answer/busy.
+  // This catches the voicemail case where DialCallStatus = 'completed' (voicemail answered).
 
-  // Short call, not forwarded — caller bailed during IVR. Send missed-call SMS.
+  // Short call — send missed-call SMS.
   const message = MISSED_CALL_MESSAGES[to] ||
     "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
 
@@ -458,6 +431,17 @@ async function handleIncomingSMS(request, env) {
   const from = formData.get('From');
   const to   = formData.get('To');
   const body = formData.get('Body');
+
+  // Check SMS spam blocklist in KV — silently drop blocked numbers
+  if (from && env.SPAM_LOG) {
+    try {
+      const blocked = await env.SPAM_LOG.get(`sms_spam:${from}`);
+      if (blocked) {
+        return new Response('<Response></Response>', { headers: { 'Content-Type': 'text/xml' } });
+      }
+    } catch (e) { /* non-blocking */ }
+  }
+
   const siteLabel = SITE_LABELS[to] || to;
   await sendTelegramAlert(env,
     `💬 <b>New SMS — ${siteLabel}</b>\nFrom: ${from}\n\n${body?.substring(0, 300) || '(no body)'}`
@@ -466,22 +450,30 @@ async function handleIncomingSMS(request, env) {
 }
 
 async function handleMissedCall(request, env) {
-  const formData  = await request.formData();
-  const callStatus = formData.get('CallStatus');
-  const from       = formData.get('From');
-  const to         = formData.get('To');
+  const formData   = await request.formData();
+  const dialStatus = formData.get('DialCallStatus') || formData.get('CallStatus') || '';
+  const from       = formData.get('From') || '';
+  const url        = new URL(request.url);
+  // Prefer query params (passed from handleVoiceCall) for to/site, fall back to form
+  const to         = url.searchParams.get('to') || formData.get('To') || '';
+  const siteLabel  = url.searchParams.get('site')
+                     ? decodeURIComponent(url.searchParams.get('site'))
+                     : (SITE_LABELS[to] || to);
 
+  // Only act on actual missed calls
   const missedStatuses = ['no-answer', 'busy', 'canceled', 'failed'];
-  if (!missedStatuses.includes(callStatus)) {
-    return new Response('OK', { status: 200 });
+  if (!missedStatuses.includes(dialStatus)) {
+    return new Response('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+      { headers: { 'Content-Type': 'text/xml' } });
   }
 
+  // Send SMS to caller
   const message = MISSED_CALL_MESSAGES[to] ||
     "Hey, I'm sorry I missed your call! Please reply with what you need and your location and I'll get right back to you. — Costa";
 
   await twilioPost(env, 'Messages.json', { From: to, To: from, Body: message });
 
-  const siteLabel = SITE_LABELS[to] || to;
+  // Alert Costa on Telegram
   const siteUrl   = SITE_URLS[to];
   const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
   const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
@@ -489,7 +481,12 @@ async function handleMissedCall(request, env) {
     `📞 <b>Missed call — ${siteLink}</b>\n📲 ${callerFmt}\n✅ Auto-text sent`
   );
 
-  return new Response('OK', { status: 200 });
+  // Play a voice message to the caller instead of dead air
+  return new Response(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">Thanks for calling. We just missed you, but we're sending you a text message right now. We'll follow up with you shortly. Have a great day.</Say>
+  <Hangup/>
+</Response>`, { headers: { 'Content-Type': 'text/xml' } });
 }
 
 // ── Contacts Lookup ──

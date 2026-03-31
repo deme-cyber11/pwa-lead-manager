@@ -80,6 +80,23 @@ function saveConfig(cfg) {
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
+  // Handle ?reset=1 — nuke caches + service worker, then reload clean
+  if (new URLSearchParams(location.search).get('reset') === '1') {
+    (async () => {
+      // Clear all caches
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      // Unregister service workers
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+      // Clear localStorage read state
+      localStorage.removeItem(READ_KEY);
+      // Redirect without ?reset
+      location.replace(location.pathname);
+    })();
+    return;
+  }
+
   // Check if configured
   const cfg = getConfig();
 
