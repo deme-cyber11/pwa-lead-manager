@@ -42,6 +42,7 @@ let currentContact = null;
 let unreadCounts = {};
 let pullStartY = 0;
 let crmContacts = {}; // { "+15551234567": { name: "Francisco", business: "ABC Plumbing" } }
+let blockedCallers = new Set(); // fetched from worker on init
 
 // === Config ===
 const CONFIG_KEY = 'lead-mgr-config';
@@ -176,6 +177,12 @@ async function initApp(cfg) {
     console.log(`CRM contacts loaded: ${Object.keys(crmContacts).length}`);
   }).catch(() => { /* silent fail — fallback to SMS parsing */ });
 
+  // Load blocked callers list — filter spam from dashboard
+  TwilioAPI.getBlockedCallers().then(data => {
+    blockedCallers = new Set(data.blocked || []);
+    console.log(`Blocked callers loaded: ${blockedCallers.size}`);
+  }).catch(() => { /* silent fail */ });
+
   buildTabs();
   selectBiz(0);
   setupEventListeners();
@@ -267,6 +274,7 @@ async function loadBizData(idx) {
     messages.forEach(msg => {
       const contact = msg.direction === 'inbound' ? msg.from : msg.to;
       if (contact === biz.number) return; // skip self
+      if (blockedCallers.has(contact)) return; // skip spam/blocked
       const key = contact;
       if (!contactMap[key]) contactMap[key] = { number: contact, messages: [], calls: [], lastActivity: null };
       contactMap[key].messages.push(msg);
@@ -279,6 +287,7 @@ async function loadBizData(idx) {
       const contact = call.direction === 'inbound' ? call.from : call.to;
       if (contact === biz.number) return;
       if (contact === COSTA_PERSONAL) return; // Skip Costa's own outbound callbacks
+      if (blockedCallers.has(contact)) return; // Skip spam/blocked numbers
       const key = contact;
       if (!contactMap[key]) contactMap[key] = { number: contact, messages: [], calls: [], lastActivity: null };
       contactMap[key].calls.push(call);

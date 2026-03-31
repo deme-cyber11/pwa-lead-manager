@@ -220,6 +220,7 @@ export default {
       if (path === '/messages' && request.method === 'POST') return await sendMessage(request, env);
       if (path === '/calls' && request.method === 'GET') return await getCalls(url, env);
       if (path === '/spam-stats' && request.method === 'GET') return await getSpamStats(env);
+      if (path === '/blocked-callers' && request.method === 'GET') return json({ blocked: [...BLOCKED_CALLERS] });
       if (path === '/contacts' && request.method === 'GET') return await getContacts(env);
       if (path === '/call' && request.method === 'POST') return await initiateCall(request, env);
       if (path === '/push/vapid-key') return json({ key: env.VAPID_PUBLIC_KEY || '' });
@@ -347,14 +348,8 @@ async function handleCallStatus(request, env) {
     } catch (e) { /* non-blocking, proceed with send */ }
   }
 
-  // Alert Telegram (call info only — no auto-text confirmation)
-  const siteLabel = SITE_LABELS[to]  || to;
-  const siteUrl   = SITE_URLS[to];
-  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
-  const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
-  await sendTelegramAlert(env,
-    `📞 <b>Short call — ${siteLink}</b>\n📲 ${callerFmt} · ${duration}s`
-  );
+  // No Telegram alert here — incoming call alert already sent by handleVoiceCall.
+  // This handler only sends the auto-text SMS silently.
 
   // Skip SMS for blocked callers
   if (BLOCKED_CALLERS.has(from)) {
@@ -495,13 +490,8 @@ async function handleMissedCall(request, env) {
       { headers: { 'Content-Type': 'text/xml' } });
   }
 
-  // Alert Costa on Telegram (calls only — no auto-text confirmation)
-  const siteUrl   = SITE_URLS[to];
-  const siteLink  = siteUrl ? `<a href="${siteUrl}">${siteLabel}</a>` : siteLabel;
-  const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 ($1) $2-$3');
-  await sendTelegramAlert(env,
-    `📞 <b>Missed call — ${siteLink}</b>\n📲 ${callerFmt}`
-  );
+  // No Telegram alert here — incoming call alert already sent by handleVoiceCall.
+  // This handler only sends the auto-text SMS silently.
 
   // Skip SMS for blocked callers
   if (BLOCKED_CALLERS.has(from)) {

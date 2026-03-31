@@ -66,5 +66,10 @@ const TwilioAPI = (() => {
     return request('/contacts');
   }
 
-  return { init, getMessages, sendMessage, getCalls, initiateCall, registerPush, getVapidKey, getSpamStats, getContacts };
+  // Get blocked callers list
+  async function getBlockedCallers() {
+    return request('/blocked-callers');
+  }
+
+  return { init, getMessages, sendMessage, getCalls, initiateCall, registerPush, getVapidKey, getSpamStats, getContacts, getBlockedCallers };
 })();
