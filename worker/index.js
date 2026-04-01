@@ -550,6 +550,30 @@ async function handleIncomingSMS(request, env) {
   }
 
   const siteLabel = SITE_LABELS[to] || to;
+  const bodyLower = (body || '').toLowerCase().trim();
+
+  // Auto opt-out detection — STOP, unsubscribe, remove me, etc.
+  const OPT_OUT_KEYWORDS = ['stop', 'unsubscribe', 'opt out', 'opt-out', 'remove me', 'remove', 'don\'t text', 'dont text', 'no more', 'leave me alone', 'cancel'];
+  const isOptOut = OPT_OUT_KEYWORDS.some(kw => bodyLower === kw || bodyLower.startsWith(kw + ' ') || bodyLower.endsWith(' ' + kw));
+
+  if (isOptOut && from && env.SPAM_LOG) {
+    try {
+      await env.SPAM_LOG.put(`sms_optout:${from}`, JSON.stringify({
+        reason: body, opted_out_at: new Date().toISOString(), site: siteLabel
+      }));
+    } catch (e) { /* non-blocking */ }
+
+    await sendTelegramAlert(env,
+      `🚫 <b>SMS OPT-OUT — ${siteLabel}</b>\nFrom: ${from}\nMessage: ${body?.substring(0, 200) || '(no body)'}\n\n<i>Number added to opt-out list. CRM update needed.</i>`
+    );
+
+    // Reply confirming removal
+    return new Response(
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Message>You've been removed and won't receive any more messages. Thank you.</Message></Response>`,
+      { headers: { 'Content-Type': 'text/xml' } }
+    );
+  }
+
   await sendTelegramAlert(env,
     `💬 <b>New SMS — ${siteLabel}</b>\nFrom: ${from}\n\n${body?.substring(0, 300) || '(no body)'}`
   );
