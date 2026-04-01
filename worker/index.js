@@ -220,7 +220,48 @@ export default {
       if (path === '/messages' && request.method === 'POST') return await sendMessage(request, env);
       if (path === '/calls' && request.method === 'GET') return await getCalls(url, env);
       if (path === '/spam-stats' && request.method === 'GET') return await getSpamStats(env);
-      if (path === '/blocked-callers' && request.method === 'GET') return json({ blocked: [...BLOCKED_CALLERS] });
+      if (path === '/blocked-callers' && request.method === 'GET') {
+        // Merge static + dynamic blocklist
+        const dynamicBlocked = [];
+        if (env.SPAM_LOG) {
+          try {
+            const list = await env.SPAM_LOG.list({ prefix: 'dyn_block:' });
+            for (const key of list.keys) {
+              const num = key.name.replace('dyn_block:', '');
+              const meta = await env.SPAM_LOG.get(key.name);
+              dynamicBlocked.push({ number: num, ...(meta ? JSON.parse(meta) : {}) });
+            }
+          } catch (e) { /* non-blocking */ }
+        }
+        return json({ blocked: [...BLOCKED_CALLERS], dynamic: dynamicBlocked });
+      }
+
+      // POST /block — add a number to dynamic blocklist
+      if (path === '/block' && request.method === 'POST') {
+        const secret = url.searchParams.get('secret');
+        if (secret !== env.WEBHOOK_SECRET) return new Response('Forbidden', { status: 403 });
+        const body = await request.json();
+        const number = body.number?.startsWith('+') ? body.number : `+1${body.number.replace(/\D/g, '')}`;
+        const reason = body.reason || 'manual';
+        if (env.SPAM_LOG) {
+          await env.SPAM_LOG.put(`dyn_block:${number}`, JSON.stringify({
+            reason, blocked_at: new Date().toISOString()
+          }), { expirationTtl: 2592000 }); // 30 days
+        }
+        return json({ ok: true, blocked: number, reason });
+      }
+
+      // DELETE /block — remove a number from dynamic blocklist
+      if (path === '/block' && request.method === 'DELETE') {
+        const secret = url.searchParams.get('secret');
+        if (secret !== env.WEBHOOK_SECRET) return new Response('Forbidden', { status: 403 });
+        const body = await request.json();
+        const number = body.number?.startsWith('+') ? body.number : `+1${body.number.replace(/\D/g, '')}`;
+        if (env.SPAM_LOG) {
+          await env.SPAM_LOG.delete(`dyn_block:${number}`);
+        }
+        return json({ ok: true, unblocked: number });
+      }
       if (path === '/contacts' && request.method === 'GET') return await getContacts(env);
       if (path === '/call' && request.method === 'POST') return await initiateCall(request, env);
       if (path === '/push/vapid-key') return json({ key: env.VAPID_PUBLIC_KEY || '' });
@@ -244,6 +285,7 @@ const BLOCKED_CALLERS = new Set([
   '+12252300428',  // Angi's List robocall — 2026-03-31
   '+17254856981',  // spam — Knox Pressure — 2026-03-31
   '+12393967331',  // spam — SA Pool — 2026-03-31
+  '+15098165463',  // Angi's List — Spokane Hot Tub — 2026-03-31
 ]);
 
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
@@ -263,6 +305,43 @@ async function handleVoiceCall(request, env) {
   // ── Step 0: Manual blocklist check ──
   if (BLOCKED_CALLERS.has(from)) {
     return twiml(`<Response><Reject/></Response>`);
+  }
+
+  // ── Step 0.5: Dynamic blocklist (KV-based, added via /block API or auto-detection) ──
+  if (env.SPAM_LOG) {
+    try {
+      const dynBlocked = await env.SPAM_LOG.get(`dyn_block:${from}`);
+      if (dynBlocked) {
+        return twiml(`<Response><Reject/></Response>`);
+      }
+    } catch (e) { /* non-blocking */ }
+  }
+
+  // ── Step 0.6: Multi-site spam detection ──
+  // If the same number calls 2+ different site numbers within 24h, it's a sales dialer.
+  // Real customers don't call your tree service AND your pool guy.
+  if (env.SPAM_LOG) {
+    try {
+      const callerKey = `caller_sites:${from}`;
+      const raw = await env.SPAM_LOG.get(callerKey);
+      const sites = raw ? JSON.parse(raw) : [];
+      if (!sites.includes(to)) {
+        sites.push(to);
+        await env.SPAM_LOG.put(callerKey, JSON.stringify(sites), { expirationTtl: 86400 }); // 24h window
+      }
+      if (sites.length >= 2) {
+        // Auto-block this number — it's a sales dialer
+        await env.SPAM_LOG.put(`dyn_block:${from}`, JSON.stringify({
+          reason: 'multi-site',
+          sites: sites.map(s => SITE_LABELS[s] || s),
+          blocked_at: new Date().toISOString()
+        }), { expirationTtl: 2592000 }); // block for 30 days
+        await sendTelegramAlert(env,
+          `🚫 <b>Auto-blocked spam caller</b>\n📲 ${callerFmt}\n🔍 Called ${sites.length} different sites in 24h: ${sites.map(s => SITE_LABELS[s] || s).join(', ')}`
+        );
+        return twiml(`<Response><Reject/></Response>`);
+      }
+    } catch (e) { /* non-blocking — don't break call flow for KV errors */ }
   }
 
   // ── Step 1: Check Nomorobo spam score ──
@@ -348,8 +427,12 @@ async function handleCallStatus(request, env) {
     } catch (e) { /* non-blocking, proceed with send */ }
   }
 
-  // No Telegram alert here — incoming call alert already sent by handleVoiceCall.
-  // This handler only sends the auto-text SMS silently.
+  // Alert Telegram — short/dropped call that wasn't caught by primary handler
+  const siteLabel = SITE_LABELS[to] || to;
+  const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3');
+  await sendTelegramAlert(env,
+    `🔴 <b>Missed call — ${siteLabel}</b>\n📲 ${callerFmt}\n⏱ ${duration}s (short/dropped)`
+  );
 
   // Skip SMS for blocked callers
   if (BLOCKED_CALLERS.has(from)) {
@@ -490,8 +573,11 @@ async function handleMissedCall(request, env) {
       { headers: { 'Content-Type': 'text/xml' } });
   }
 
-  // No Telegram alert here — incoming call alert already sent by handleVoiceCall.
-  // This handler only sends the auto-text SMS silently.
+  // Alert Telegram so Costa knows a call was missed
+  const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3');
+  await sendTelegramAlert(env,
+    `🔴 <b>Missed call — ${siteLabel}</b>\n📲 ${callerFmt}`
+  );
 
   // Skip SMS for blocked callers
   if (BLOCKED_CALLERS.has(from)) {
