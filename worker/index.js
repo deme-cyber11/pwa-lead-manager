@@ -286,6 +286,7 @@ const BLOCKED_CALLERS = new Set([
   '+17254856981',  // spam — Knox Pressure — 2026-03-31
   '+12393967331',  // spam — SA Pool — 2026-03-31
   '+15098165463',  // Angi's List — Spokane Hot Tub — 2026-03-31
+  '+14696636976',  // Angi's List — 2026-04-01
 ]);
 
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
