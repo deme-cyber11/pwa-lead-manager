@@ -4,6 +4,13 @@
 
 const COSTA_PHONE = '+17344761457';
 
+// Per-site forwarding overrides — tenant numbers or alternate destinations
+// Key: Twilio inbound number | Value: forward-to number
+// If a number isn't listed here, calls forward to COSTA_PHONE (default)
+const SITE_FORWARD = {
+  '+16232949154': '+18327701658',  // PHX Pool Resurfacing → tenant (updated 2026-04-03)
+};
+
 // Tailored missed-call SMS per Twilio number
 const MISSED_CALL_MESSAGES = {
   '+19187232096': "Hey, I'm sorry I missed your call! Is it water damage, flooding, or mold? Please reply with what you need and your location and I'll get right back to you. — Costa | Tulsa Water Damage Pros",
@@ -288,6 +295,7 @@ const BLOCKED_CALLERS = new Set([
   '+15098165463',  // Angi's List — Spokane Hot Tub — 2026-03-31
   '+14696636976',  // Angi's List — 2026-04-01
   '+13372423834',  // Angi's List — Lafayette Septic — 2026-04-01
+  '+16233230339',  // Angi's List — PHX Pool — 2026-04-02
 ]);
 
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
@@ -386,7 +394,7 @@ async function handleVoiceCall(request, env) {
   return twiml(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Dial callerId="${from}" timeout="30" action="${workerUrl}/webhook/missed-call?secret=${env.WEBHOOK_SECRET || ''}&amp;site=${encodeURIComponent(siteLabel)}&amp;to=${encodeURIComponent(to)}">
-    <Number url="${workerUrl}/webhook/whisper?site=${encodeURIComponent(siteLabel)}">${COSTA_PHONE}</Number>
+    <Number url="${workerUrl}/webhook/whisper?site=${encodeURIComponent(siteLabel)}">${SITE_FORWARD[to] || COSTA_PHONE}</Number>
   </Dial>
 </Response>`);
 }
@@ -528,7 +536,8 @@ async function getCalls(url, env) {
 async function initiateCall(request, env) {
   const { from, to } = await request.json();
   const twimlStr = `<Response><Dial callerId="${from}"><Number>${to}</Number></Dial></Response>`;
-  const result = await twilioPost(env, 'Calls.json', { From: from, To: COSTA_PHONE, Twiml: twimlStr });
+  const forwardTo = SITE_FORWARD[from] || COSTA_PHONE;
+  const result = await twilioPost(env, 'Calls.json', { From: from, To: forwardTo, Twiml: twimlStr });
   return json(result);
 }
 
