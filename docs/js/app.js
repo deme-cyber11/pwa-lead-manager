@@ -215,6 +215,29 @@ function buildTabs() {
     const tab = e.target.closest('.biz-tab');
     if (tab) selectBiz(parseInt(tab.dataset.idx));
   });
+
+  // Site search/filter
+  const searchInput = document.getElementById('site-search');
+  const searchClear = document.getElementById('site-search-clear');
+  
+  searchInput.addEventListener('input', e => {
+    const query = e.target.value.toLowerCase().trim();
+    searchClear.classList.toggle('hidden', !query);
+    
+    // Filter tabs
+    document.querySelectorAll('.biz-tab').forEach((tab, idx) => {
+      const biz = BUSINESSES[idx];
+      const match = !query || biz.label.toLowerCase().includes(query) || biz.short.toLowerCase().includes(query);
+      tab.style.display = match ? '' : 'none';
+    });
+  });
+  
+  searchClear.addEventListener('click', () => {
+    searchInput.value = '';
+    searchInput.focus();
+    document.querySelectorAll('.biz-tab').forEach(tab => tab.style.display = '');
+    searchClear.classList.add('hidden');
+  });
 }
 
 function selectBiz(idx) {
