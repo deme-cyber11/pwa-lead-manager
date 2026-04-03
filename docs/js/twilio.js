@@ -71,5 +71,11 @@ const TwilioAPI = (() => {
     return request('/blocked-callers');
   }
 
-  return { init, getMessages, sendMessage, getCalls, initiateCall, registerPush, getVapidKey, getSpamStats, getContacts, getBlockedCallers };
+  // Get aggregate portfolio stats across all 30 sites
+  async function getPortfolioStats(bustCache = false) {
+    const path = bustCache ? `/portfolio-stats?bust=${Date.now()}` : '/portfolio-stats';
+    return request(path);
+  }
+
+  return { init, getMessages, sendMessage, getCalls, initiateCall, registerPush, getVapidKey, getSpamStats, getContacts, getBlockedCallers, getPortfolioStats };
 })();

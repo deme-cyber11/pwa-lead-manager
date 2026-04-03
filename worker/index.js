@@ -227,6 +227,9 @@ export default {
       if (path === '/messages' && request.method === 'POST') return await sendMessage(request, env);
       if (path === '/calls' && request.method === 'GET') return await getCalls(url, env);
       if (path === '/spam-stats' && request.method === 'GET') return await getSpamStats(env);
+      if (path === '/portfolio-stats' && request.method === 'GET') {
+        return await getPortfolioStats(url, env);
+      }
       if (path === '/blocked-callers' && request.method === 'GET') {
         // Merge static + dynamic blocklist
         const dynamicBlocked = [];
@@ -673,6 +676,78 @@ async function getSpamStats(env) {
     }));
   }
   return json({ spam_counts: counts, total });
+}
+
+// ── Portfolio Stats ──
+
+async function getPortfolioStats(url, env) {
+  const bust = url.searchParams.get('bust');
+
+  // Check cache first (1 hour TTL) unless bust param present
+  if (!bust && env.SPAM_LOG) {
+    try {
+      const cached = await env.SPAM_LOG.get('portfolio_stats_cache');
+      if (cached) {
+        const data = JSON.parse(cached);
+        return json({ ...data, cached: true });
+      }
+    } catch (e) { /* cache miss */ }
+  }
+
+  const allNumbers = Object.keys(SITE_LABELS);
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    .toISOString().split('T')[0];
+
+  const sites = await Promise.all(allNumbers.map(async (num) => {
+    let totalCalls = 0;
+    let qualifiedCalls = 0;
+    let spamBlocked = 0;
+
+    // Fetch inbound calls from Twilio
+    try {
+      const callsUrl = new URL(twilioUrl(env, 'Calls.json'));
+      callsUrl.searchParams.set('To', num);
+      callsUrl.searchParams.set('Direction', 'inbound');
+      callsUrl.searchParams.set('StartTime>', thirtyDaysAgo);
+      callsUrl.searchParams.set('PageSize', '100');
+      const res = await fetch(callsUrl.toString(), {
+        headers: { 'Authorization': twilioAuth(env) }
+      });
+      const data = await res.json();
+      const calls = data.calls || [];
+      totalCalls = calls.length;
+      qualifiedCalls = calls.filter(c => parseInt(c.duration || 0) >= 60).length;
+    } catch (e) { /* skip on error */ }
+
+    // Fetch spam count from KV
+    if (env.SPAM_LOG) {
+      try {
+        const val = await env.SPAM_LOG.get(`spam_count:${num}`);
+        spamBlocked = val ? parseInt(val) : 0;
+      } catch (e) { /* skip */ }
+    }
+
+    return {
+      number: num,
+      label: SITE_LABELS[num],
+      total_calls: totalCalls,
+      qualified_calls: qualifiedCalls,
+      spam_blocked: spamBlocked,
+      has_tenant: num in SITE_FORWARD,
+      forwarding_to: SITE_FORWARD[num] || COSTA_PHONE,
+    };
+  }));
+
+  const result = { sites, generated_at: new Date().toISOString(), cached: false };
+
+  // Cache for 1 hour
+  if (env.SPAM_LOG) {
+    try {
+      await env.SPAM_LOG.put('portfolio_stats_cache', JSON.stringify(result), { expirationTtl: 3600 });
+    } catch (e) { /* non-blocking */ }
+  }
+
+  return json(result);
 }
 
 // ── Helpers ──

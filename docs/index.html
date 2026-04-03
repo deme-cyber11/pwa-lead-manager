@@ -31,6 +31,7 @@
       <h1 id="current-biz-name">Lead Manager</h1>
       <div class="header-actions">
         <button id="btn-refresh" class="icon-btn" title="Refresh">↻</button>
+        <button id="btn-stats" class="icon-btn" title="Portfolio Stats">📊</button>
         <button id="btn-notifications" class="icon-btn" title="Notifications">🔔</button>
         <button id="btn-logout" class="icon-btn" title="Logout">🔒</button>
       </div>
@@ -65,6 +66,23 @@
         </div>
       </div>
     </main>
+  </div>
+
+  <!-- Stats Overlay -->
+  <div id="stats-overlay" class="modal hidden">
+    <div class="stats-panel">
+      <div class="stats-header">
+        <h2>Portfolio Stats</h2>
+        <div class="stats-header-actions">
+          <button id="stats-refresh" class="icon-btn" title="Refresh">↻</button>
+          <button id="stats-close" class="icon-btn" title="Close">✕</button>
+        </div>
+      </div>
+      <div id="stats-summary" class="stats-summary"></div>
+      <div id="stats-grid" class="stats-grid">
+        <div class="spinner"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Toast -->

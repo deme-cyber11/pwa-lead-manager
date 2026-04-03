@@ -557,6 +557,18 @@ function setupEventListeners() {
   });
   content.addEventListener('touchend', () => { pullStartY = 0; });
 
+  // Stats overlay
+  document.getElementById('btn-stats').addEventListener('click', () => {
+    document.getElementById('stats-overlay').classList.remove('hidden');
+    loadPortfolioStats(false);
+  });
+  document.getElementById('stats-close').addEventListener('click', () => {
+    document.getElementById('stats-overlay').classList.add('hidden');
+  });
+  document.getElementById('stats-refresh').addEventListener('click', () => {
+    loadPortfolioStats(true);
+  });
+
   // Auto-refresh every 30 seconds
   setInterval(() => {
     if (!document.hidden) loadBizData(currentBiz);
@@ -653,6 +665,81 @@ function updateBadge(bizId, count) {
   } else {
     badge.classList.add('hidden');
   }
+}
+
+// === Portfolio Stats ===
+const STATS_CACHE_KEY = 'lead-mgr-portfolio-stats';
+const STATS_CACHE_TTL = 30 * 60 * 1000; // 30 min
+
+async function loadPortfolioStats(bustCache) {
+  const grid = document.getElementById('stats-grid');
+  const summary = document.getElementById('stats-summary');
+
+  // Check localStorage cache first (unless busting)
+  if (!bustCache) {
+    try {
+      const cached = localStorage.getItem(STATS_CACHE_KEY);
+      if (cached) {
+        const { data, ts } = JSON.parse(cached);
+        if (Date.now() - ts < STATS_CACHE_TTL) {
+          renderStats(data);
+          return;
+        }
+      }
+    } catch (e) { /* cache miss */ }
+  }
+
+  grid.innerHTML = '<div class="spinner"></div>';
+  summary.innerHTML = '';
+
+  try {
+    const data = await TwilioAPI.getPortfolioStats(bustCache);
+    localStorage.setItem(STATS_CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
+    renderStats(data);
+  } catch (err) {
+    grid.innerHTML = `<div class="empty-state"><span class="emoji">⚠️</span><p>Error loading stats</p><p style="font-size:13px;color:var(--red)">${escapeHtml(err.message)}</p></div>`;
+  }
+}
+
+function renderStats(data) {
+  const grid = document.getElementById('stats-grid');
+  const summary = document.getElementById('stats-summary');
+  const sites = data.sites || [];
+
+  // Sort: tenants first, then by total_calls desc
+  sites.sort((a, b) => {
+    if (a.has_tenant !== b.has_tenant) return b.has_tenant ? 1 : -1;
+    return b.total_calls - a.total_calls;
+  });
+
+  const totalCalls = sites.reduce((s, x) => s + x.total_calls, 0);
+  const totalQualified = sites.reduce((s, x) => s + x.qualified_calls, 0);
+  const totalTenants = sites.filter(x => x.has_tenant).length;
+
+  summary.innerHTML = `
+    <span class="stat-pill">${sites.length} sites</span>
+    <span class="stat-pill blue">${totalCalls} calls</span>
+    <span class="stat-pill green">${totalQualified} qualified</span>
+    <span class="stat-pill tenant">${totalTenants} tenants</span>
+  `;
+
+  grid.innerHTML = sites.map(site => {
+    const fwd = site.forwarding_to.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3');
+    return `
+      <div class="stat-card">
+        <div class="stat-card-name">${escapeHtml(site.label)}</div>
+        <div class="stat-card-badges">
+          <span class="stat-badge blue">${site.total_calls} calls</span>
+          <span class="stat-badge green">${site.qualified_calls} qualified</span>
+          ${site.spam_blocked > 0 ? `<span class="stat-badge red">${site.spam_blocked} spam</span>` : ''}
+        </div>
+        <div class="stat-card-footer">
+          <span class="stat-tenant ${site.has_tenant ? 'active' : ''}">${site.has_tenant ? '✓ Tenant' : 'Costa'}</span>
+          <span class="stat-fwd">${fwd}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 function toast(msg) {
