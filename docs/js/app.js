@@ -307,6 +307,8 @@ async function loadBizData(idx) {
 
     const COSTA_PERSONAL = '+17344761457'; // Never show on dashboard — Costa's personal callback number
     calls.forEach(call => {
+      // Skip Twilio forwarding legs — these are outbound dials to the business/associate, not customers
+      if (call.direction === 'outbound-dial' || call.direction === 'outbound-api') return;
       const contact = call.direction === 'inbound' ? call.from : call.to;
       if (contact === biz.number) return;
       if (contact === COSTA_PERSONAL) return; // Skip Costa's own outbound callbacks
