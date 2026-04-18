@@ -177,6 +177,11 @@ export default {
       return json({ ok: true, ts: Date.now(), worker: 'lead-manager-api', telegram: tgOk, twilio: twOk });
     }
 
+    // ── Form Lead Intake ──
+    if (path === '/ingest' && (request.method === 'POST' || request.method === 'OPTIONS')) {
+      return await handleLeadIngest(request, env);
+    }
+
     // ── Stripe Checkout ──
     if (path === '/stripe/checkout' && request.method === 'POST') {
       const PRICE_IDS = {
@@ -751,6 +756,86 @@ async function getPortfolioStats(url, env) {
 }
 
 // ── Helpers ──
+
+async function handleLeadIngest(request, env) {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: CORS_HEADERS });
+  }
+  try {
+    let fields = {};
+    const ct = request.headers.get('Content-Type') || '';
+
+    if (ct.includes('multipart/form-data')) {
+      const fd = await request.formData();
+      for (const [k, v] of fd.entries()) {
+        if (typeof v === 'string') fields[k] = v;
+      }
+    } else if (ct.includes('application/x-www-form-urlencoded')) {
+      const params = new URLSearchParams(await request.text());
+      for (const [k, v] of params.entries()) fields[k] = v;
+    } else {
+      fields = await request.json().catch(() => ({}));
+    }
+
+    // Honeypot
+    if (fields._honey || fields.website) return json({ success: true });
+
+    const name    = fields.name    || fields.Name    || 'Unknown';
+    const email   = fields.email   || fields.Email   || '';
+    const phone   = fields.phone   || fields.Phone   || '';
+    const message = fields.message || fields.Message || fields.description || '';
+    const address = fields.address || fields.Address || '';
+    const source  = fields._source || (request.headers.get('Referer') || 'Unknown Site').replace(/https?:\/\//, '').split('/')[0];
+    const subject = fields._subject || `New Lead — ${source}`;
+
+    if (!email && !phone) return json({ error: 'No contact info' }, 400);
+
+    const rows = [
+      ['Source', source],
+      ['Name', name],
+      email   ? ['Email',   `<a href="mailto:${email}">${email}</a>`]   : null,
+      phone   ? ['Phone',   `<a href="tel:${phone}">${phone}</a>`]       : null,
+      address ? ['Address', address] : null,
+      message ? ['Message', message] : null,
+    ].filter(Boolean);
+
+    const tableRows = rows.map(([k, v]) =>
+      `<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold">${k}</td><td style="padding:8px;border-bottom:1px solid #eee">${v}</td></tr>`
+    ).join('');
+
+    const htmlBody = `<div style="font-family:Arial,sans-serif;color:#333;max-width:600px">
+      <h2 style="color:#e94560;margin-bottom:16px">New Form Lead</h2>
+      <table style="border-collapse:collapse;width:100%">${tableRows}</table>
+    </div>`;
+
+    if (env.BREVO_API_KEY) {
+      await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sender: { name: 'Iron Tiger Lead System', email: 'irontigerdigital@gmail.com' },
+          to: [{ email: 'irontigerdigital@gmail.com', name: 'Costa Demetral' }],
+          subject,
+          htmlContent: htmlBody
+        })
+      });
+    }
+
+    const tgText = `🔔 <b>New Form Lead</b>\n<b>Site:</b> ${source}\n<b>Name:</b> ${name}` +
+      (phone   ? `\n<b>Phone:</b> ${phone}`   : '') +
+      (email   ? `\n<b>Email:</b> ${email}`   : '') +
+      (address ? `\n<b>Address:</b> ${address}` : '') +
+      (message ? `\n<b>Note:</b> ${message.slice(0, 200)}` : '');
+    await sendTelegramAlert(env, tgText);
+
+    const redirect = fields._next || fields._redirect;
+    if (redirect) return Response.redirect(redirect, 302);
+
+    return json({ success: true });
+  } catch (e) {
+    return json({ error: 'Server error', detail: e.message }, 500);
+  }
+}
 
 async function sendTelegramAlert(env, message) {
   const token  = env.TELEGRAM_BOT_TOKEN;

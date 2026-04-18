@@ -25,7 +25,9 @@ jobs:
             TWILIO_AUTH_TOKEN
             TWILIO_ACCOUNT_SID
             AUTH_PIN
+            BREVO_API_KEY
         env:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           AUTH_PIN: ${{ secrets.AUTH_PIN }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
