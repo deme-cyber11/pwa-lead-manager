@@ -293,6 +293,30 @@ export default {
       }
     }
 
+    // ── CRM Lead Dashboard endpoints ──
+    // Auth: ?pin= query param OR Authorization: Bearer <pin> OR X-Auth-Token header
+    const pinParam = url.searchParams.get('pin');
+    const bearerHeader = (request.headers.get('Authorization') || '').replace('Bearer ', '');
+    const xAuthHeader = request.headers.get('X-Auth-Token');
+    const providedPin = pinParam || bearerHeader || xAuthHeader;
+
+    if (path === '/api/leads' && request.method === 'GET') {
+      if (providedPin !== env.AUTH_PIN) return json({ error: 'Unauthorized' }, 401);
+      return await getUnifiedLeads(url, env);
+    }
+
+    if (path.startsWith('/api/leads/') && path.endsWith('/status') && request.method === 'POST') {
+      if (providedPin !== env.AUTH_PIN) return json({ error: 'Unauthorized' }, 401);
+      const leadId = path.replace('/api/leads/', '').replace('/status', '');
+      return await updateLeadStatus(request, leadId, env);
+    }
+
+    if (path.startsWith('/api/leads/') && request.method === 'GET') {
+      if (providedPin !== env.AUTH_PIN) return json({ error: 'Unauthorized' }, 401);
+      const leadId = path.replace('/api/leads/', '');
+      return await getLeadDetail(leadId, env);
+    }
+
     // Auth check for all other routes
     const authToken = request.headers.get('X-Auth-Token');
     if (authToken !== env.AUTH_PIN) {
@@ -922,6 +946,43 @@ async function handleLeadIngest(request, env) {
       (message ? `\n<b>Note:</b> ${message.slice(0, 200)}` : '');
     await sendTelegramAlert(env, tgText);
 
+    // ── Store lead in KV for CRM dashboard ──
+    if (env.SPAM_LOG) {
+      try {
+        const ts = Date.now();
+        const phoneHash = phone ? phone.replace(/\D/g, '').slice(-10) : email.replace(/[^a-z0-9]/gi, '').slice(0, 10);
+        const leadKey = `lead:${ts}:${phoneHash}`;
+        const leadRecord = {
+          id: leadKey,
+          source: 'form',
+          timestamp: new Date(ts).toISOString(),
+          site: source,
+          name,
+          phone,
+          email,
+          address,
+          service,
+          urgency,
+          status: 'new',
+          summary: message.slice(0, 500),
+          recording_url: null,
+          transcript: null,
+          raw: fields
+        };
+        await env.SPAM_LOG.put(leadKey, JSON.stringify(leadRecord), { expirationTtl: 7776000 }); // 90 days
+
+        // Update index
+        const idxRaw = await env.SPAM_LOG.get('leads:index');
+        const idx = idxRaw ? JSON.parse(idxRaw) : [];
+        idx.unshift(leadKey);
+        // Keep index at 500 entries max
+        if (idx.length > 500) idx.splice(500);
+        await env.SPAM_LOG.put('leads:index', JSON.stringify(idx), { expirationTtl: 7776000 });
+      } catch (e) {
+        console.error('KV lead store failed:', e.message);
+      }
+    }
+
     const redirect = fields._next || fields._redirect;
     if (redirect) return Response.redirect(redirect, 302);
 
@@ -958,4 +1019,244 @@ function json(data, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
   });
+}
+
+// ── CRM Lead Dashboard ──────────────────────────────────────────────────────
+
+async function getUnifiedLeads(url, env) {
+  try {
+    const limit = parseInt(url.searchParams.get('limit') || '200');
+
+    // 1. Pull KV form leads
+    const kvLeads = [];
+    if (env.SPAM_LOG) {
+      try {
+        const idxRaw = await env.SPAM_LOG.get('leads:index');
+        const idx = idxRaw ? JSON.parse(idxRaw) : [];
+        const keys = idx.slice(0, limit);
+        const fetched = await Promise.all(keys.map(k => env.SPAM_LOG.get(k)));
+        for (const raw of fetched) {
+          if (raw) {
+            try { kvLeads.push(JSON.parse(raw)); } catch (e) {}
+          }
+        }
+      } catch (e) {
+        console.error('KV leads fetch error:', e.message);
+      }
+    }
+
+    // 2. Pull Retell voice calls
+    const retellLeads = [];
+    if (env.RETELL_API_KEY) {
+      try {
+        const res = await fetch('https://api.retellai.com/v2/list-calls', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${env.RETELL_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            agent_id: ['agent_c89f789b30dde8b7e1edcd9ec9'],
+            limit: 200
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const calls = data.calls || data || [];
+          for (const call of calls) {
+            const analysis = call.call_analysis || {};
+            const phone = call.from_number || call.caller_id || '';
+            const ts = call.start_timestamp
+              ? new Date(call.start_timestamp).toISOString()
+              : new Date(call.created_at || Date.now()).toISOString();
+            const tsMs = call.start_timestamp
+              ? (typeof call.start_timestamp === 'number' ? call.start_timestamp : new Date(call.start_timestamp).getTime())
+              : Date.now();
+
+            retellLeads.push({
+              id: `retell:${call.call_id}`,
+              source: 'voice',
+              timestamp: ts,
+              _tsMs: tsMs,
+              site: analysis.custom_analysis_data?.site_domain
+                || call.agent_name
+                || 'Retell Voice Agent',
+              name: analysis.custom_analysis_data?.customer_name
+                || analysis.customer_name
+                || extractNameFromTranscript(call.transcript)
+                || 'Unknown Caller',
+              phone,
+              email: '',
+              address: analysis.custom_analysis_data?.address
+                || analysis.address
+                || '',
+              service: analysis.custom_analysis_data?.service_requested
+                || analysis.service_requested
+                || '',
+              urgency: analysis.custom_analysis_data?.urgency
+                || analysis.urgency
+                || '',
+              status: 'new',
+              summary: analysis.call_summary || analysis.custom_analysis_data?.call_summary || '',
+              recording_url: call.recording_url || null,
+              transcript: call.transcript || null,
+              lead_quality: analysis.custom_analysis_data?.lead_quality || analysis.lead_quality || '',
+              call_id: call.call_id,
+              raw: { call_analysis: analysis, duration: call.duration_ms }
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Retell fetch error:', e.message);
+      }
+    }
+
+    // 3. Load status overrides from KV
+    const allLeads = [...kvLeads, ...retellLeads];
+    if (env.SPAM_LOG && allLeads.length) {
+      const statusKeys = allLeads.map(l => `lead_status:${l.id}`);
+      // Batch fetch in groups of 25
+      const chunks = [];
+      for (let i = 0; i < statusKeys.length; i += 25) chunks.push(statusKeys.slice(i, i + 25));
+      for (const chunk of chunks) {
+        const statuses = await Promise.all(chunk.map(k => env.SPAM_LOG.get(k).catch(() => null)));
+        chunk.forEach((key, i) => {
+          if (statuses[i]) {
+            const leadId = key.replace('lead_status:', '');
+            const lead = allLeads.find(l => l.id === leadId);
+            if (lead) lead.status = statuses[i];
+          }
+        });
+      }
+    }
+
+    // 4. Deduplicate voice + form leads by phone + 5-min window
+    const deduped = deduplicateLeads(allLeads);
+
+    // 5. Sort most-recent first
+    deduped.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    // Strip internal fields
+    const clean = deduped.map(({ _tsMs, ...rest }) => rest);
+
+    return json({ leads: clean, total: clean.length, generated_at: new Date().toISOString() });
+  } catch (e) {
+    return json({ error: e.message }, 500);
+  }
+}
+
+async function getLeadDetail(leadId, env) {
+  try {
+    // Try KV first
+    if (env.SPAM_LOG && leadId.startsWith('lead:')) {
+      const raw = await env.SPAM_LOG.get(leadId);
+      if (raw) {
+        const lead = JSON.parse(raw);
+        // Load status override
+        const statusOverride = await env.SPAM_LOG.get(`lead_status:${leadId}`).catch(() => null);
+        if (statusOverride) lead.status = statusOverride;
+        return json(lead);
+      }
+    }
+
+    // Try Retell
+    if (leadId.startsWith('retell:')) {
+      const callId = leadId.replace('retell:', '');
+      const res = await fetch(`https://api.retellai.com/v2/get-call/${callId}`, {
+        headers: { 'Authorization': `Bearer ${env.RETELL_API_KEY}` }
+      });
+      if (res.ok) {
+        const call = await res.json();
+        const analysis = call.call_analysis || {};
+        const statusOverride = env.SPAM_LOG
+          ? await env.SPAM_LOG.get(`lead_status:${leadId}`).catch(() => null)
+          : null;
+
+        return json({
+          id: leadId,
+          source: 'voice',
+          timestamp: call.start_timestamp
+            ? new Date(call.start_timestamp).toISOString()
+            : new Date().toISOString(),
+          site: analysis.custom_analysis_data?.site_domain || 'Retell Voice Agent',
+          name: analysis.custom_analysis_data?.customer_name || analysis.customer_name || 'Unknown Caller',
+          phone: call.from_number || '',
+          email: '',
+          address: analysis.custom_analysis_data?.address || analysis.address || '',
+          service: analysis.custom_analysis_data?.service_requested || analysis.service_requested || '',
+          urgency: analysis.custom_analysis_data?.urgency || analysis.urgency || '',
+          status: statusOverride || 'new',
+          summary: analysis.call_summary || '',
+          recording_url: call.recording_url || null,
+          transcript: call.transcript || null,
+          lead_quality: analysis.custom_analysis_data?.lead_quality || analysis.lead_quality || '',
+          call_id: callId,
+          raw: call
+        });
+      }
+    }
+
+    return json({ error: 'Lead not found' }, 404);
+  } catch (e) {
+    return json({ error: e.message }, 500);
+  }
+}
+
+async function updateLeadStatus(request, leadId, env) {
+  try {
+    const body = await request.json();
+    const status = body.status;
+    const validStatuses = ['new', 'contacted', 'qualified', 'closed', 'junk'];
+    if (!validStatuses.includes(status)) {
+      return json({ error: 'Invalid status. Must be: ' + validStatuses.join(', ') }, 400);
+    }
+    if (env.SPAM_LOG) {
+      await env.SPAM_LOG.put(`lead_status:${leadId}`, status, { expirationTtl: 7776000 });
+    }
+    return json({ ok: true, id: leadId, status });
+  } catch (e) {
+    return json({ error: e.message }, 500);
+  }
+}
+
+function deduplicateLeads(leads) {
+  const FIVE_MIN = 5 * 60 * 1000;
+  const result = [];
+  const seen = new Map(); // phone -> [{ ts, idx }]
+
+  for (const lead of leads) {
+    if (!lead.phone) {
+      result.push(lead);
+      continue;
+    }
+    const phone = lead.phone.replace(/\D/g, '').slice(-10);
+    const ts = new Date(lead.timestamp).getTime();
+    const existing = seen.get(phone) || [];
+    const dup = existing.find(e => Math.abs(e.ts - ts) <= FIVE_MIN);
+    if (dup) {
+      // Merge: prefer the richer source (voice wins if it has recording)
+      const other = result[dup.idx];
+      if (lead.source === 'voice' && other.source === 'form') {
+        // Merge voice data into form lead
+        result[dup.idx] = { ...other, ...lead, source: 'voice+form', status: other.status };
+      } else if (lead.source === 'form' && other.source === 'voice') {
+        result[dup.idx] = { ...lead, ...other, source: 'voice+form', status: other.status };
+      }
+      // Same source duplicate — skip
+    } else {
+      const idx = result.length;
+      result.push(lead);
+      existing.push({ ts, idx });
+      seen.set(phone, existing);
+    }
+  }
+
+  return result;
+}
+
+function extractNameFromTranscript(transcript) {
+  if (!transcript) return null;
+  // Try to find a name from common patterns like "I'm John" or "My name is Jane"
+  const match = transcript.match(/(?:my name is|i'm|i am)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)/i);
+  return match ? match[1] : null;
 }

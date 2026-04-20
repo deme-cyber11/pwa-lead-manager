@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Iron Tiger — Lead CRM</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0d14;color:#e2e8f0;font-size:14px;line-height:1.5;min-height:100vh}
+
+/* PIN overlay */
+#pin-overlay{position:fixed;inset:0;background:rgba(10,13,20,.97);display:flex;align-items:center;justify-content:center;z-index:1000}
+#pin-overlay.hidden{display:none}
+.pin-box{background:#1a1f2e;border-radius:12px;padding:40px 48px;text-align:center;width:340px;border:1px solid #2a3347}
+.pin-logo{font-size:22px;font-weight:800;color:#f97316;letter-spacing:.04em;margin-bottom:8px}
+.pin-sub{font-size:12px;color:#64748b;margin-bottom:24px}
+.pin-box input{width:100%;background:#0f1117;border:1px solid #2a3347;border-radius:8px;padding:12px 16px;color:#e2e8f0;font-size:18px;letter-spacing:.2em;text-align:center;outline:none;margin-bottom:12px}
+.pin-box input:focus{border-color:#f97316}
+.pin-box button{width:100%;background:#f97316;color:#fff;border:none;border-radius:8px;padding:12px;font-size:14px;font-weight:700;cursor:pointer}
+.pin-box button:hover{background:#ea6c0c}
+.pin-error{font-size:12px;color:#ef4444;margin-top:8px;min-height:16px}
+
+/* Layout */
+.wrap{max-width:1400px;margin:0 auto;padding:20px 24px}
+.header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1e2330;padding-bottom:16px;margin-bottom:20px;flex-wrap:wrap;gap:12px}
+.logo{font-size:18px;font-weight:800;color:#f97316;letter-spacing:.04em}
+.header-right{display:flex;align-items:center;gap:12px}
+.refresh-btn{background:#1a1f2e;border:1px solid #2a3347;border-radius:6px;padding:6px 14px;color:#94a3b8;font-size:12px;cursor:pointer}
+.refresh-btn:hover{border-color:#f97316;color:#f97316}
+.last-refresh{font-size:11px;color:#475569}
+
+/* Stats bar */
+.stats-bar{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px}
+.stat{background:#0f1117;border-radius:8px;padding:12px 14px;text-align:center}
+.stat-val{font-size:26px;font-weight:800;line-height:1}
+.stat-label{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
+.v-orange{color:#f97316}
+.v-blue{color:#3b82f6}
+.v-purple{color:#a855f7}
+.v-red{color:#ef4444}
+.v-green{color:#22c55e}
+
+/* Filters */
+.filter-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;align-items:center}
+.filter-row select,.filter-row input{background:#1a1f2e;border:1px solid #2a3347;border-radius:6px;padding:7px 12px;color:#e2e8f0;font-size:13px;outline:none;min-width:130px}
+.filter-row select:focus,.filter-row input:focus{border-color:#f97316}
+.filter-row input{flex:1;min-width:200px}
+.filter-row input::placeholder{color:#475569}
+
+/* Table */
+.table-wrap{overflow-x:auto;border-radius:10px;background:#1a1f2e}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:900px}
+thead th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;padding:10px 12px;text-align:left;border-bottom:1px solid #1e2330;white-space:nowrap;user-select:none;cursor:pointer}
+thead th:hover{color:#94a3b8}
+thead th.sort-asc::after{content:' ↑'}
+thead th.sort-desc::after{content:' ↓'}
+tbody tr{cursor:pointer;transition:background .12s}
+tbody tr:hover{background:#1e2535}
+tbody tr.selected{background:#1e2a40;border-left:2px solid #f97316}
+tbody td{padding:9px 12px;border-bottom:1px solid #111827;vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.04em}
+.badge-voice{background:#1d3a6b;color:#93c5fd}
+.badge-form{background:#3b1d6b;color:#c4b5fd}
+.badge-both{background:#1d4a3b;color:#6ee7b7}
+
+.urgency-pill{display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;border-radius:12px;text-transform:uppercase;letter-spacing:.03em}
+.u-emergency{background:#4c1d1d;color:#fca5a5}
+.u-same{background:#4c3a1d;color:#fcd34d}
+.u-scheduled{background:#1d2d4c;color:#93c5fd}
+.u-unknown{background:#1e2330;color:#64748b}
+
+.status-select{background:#0f1117;border:1px solid #2a3347;border-radius:4px;color:#e2e8f0;font-size:11px;padding:4px 8px;cursor:pointer}
+.status-select:focus{outline:none;border-color:#f97316}
+.status-new{color:#f97316}
+.status-contacted{color:#3b82f6}
+.status-qualified{color:#22c55e}
+.status-closed{color:#a855f7}
+.status-junk{color:#475569}
+
+/* Detail panel */
+#detail-panel{position:fixed;top:0;right:-520px;width:500px;height:100vh;background:#1a1f2e;border-left:1px solid #2a3347;overflow-y:auto;transition:right .25s ease;z-index:500;display:flex;flex-direction:column}
+#detail-panel.open{right:0}
+.detail-header{padding:20px 20px 16px;border-bottom:1px solid #1e2330;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.detail-title{font-size:15px;font-weight:700;color:#e2e8f0}
+.detail-close{background:none;border:none;color:#64748b;font-size:20px;cursor:pointer;padding:4px 8px;border-radius:4px}
+.detail-close:hover{color:#e2e8f0;background:#2a3347}
+.detail-body{padding:20px;flex:1;overflow-y:auto}
+.detail-section{margin-bottom:20px}
+.detail-section-title{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-bottom:8px;font-weight:700}
+.detail-row{display:flex;gap:8px;margin-bottom:6px;font-size:13px}
+.detail-label{color:#64748b;flex-shrink:0;width:80px;font-size:12px}
+.detail-value{color:#e2e8f0;word-break:break-word}
+.detail-actions{display:flex;flex-wrap:wrap;gap:8px;padding:16px 20px;border-top:1px solid #1e2330;flex-shrink:0}
+.action-btn{background:#1e2535;border:1px solid #2a3347;color:#94a3b8;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:all .12s}
+.action-btn:hover{border-color:#f97316;color:#f97316}
+.action-btn.primary{background:#f97316;border-color:#f97316;color:#fff}
+.action-btn.primary:hover{background:#ea6c0c}
+
+/* Recording player */
+.audio-player{width:100%;margin-top:8px;accent-color:#f97316;height:36px}
+audio::-webkit-media-controls-panel{background:#0f1117}
+
+/* Transcript */
+.transcript{background:#0f1117;border-radius:8px;padding:14px;font-size:12px;line-height:1.7;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+.transcript .speaker-agent{color:#f97316;font-weight:700}
+.transcript .speaker-user{color:#93c5fd;font-weight:700}
+.transcript-block{margin-bottom:8px}
+
+/* Loading / empty states */
+.loading{text-align:center;padding:60px 20px;color:#475569}
+.spinner{width:32px;height:32px;border:3px solid #1e2330;border-top-color:#f97316;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:60px 20px;color:#475569;font-size:13px}
+
+/* Toast */
+#toast{position:fixed;bottom:24px;right:24px;background:#1a1f2e;border:1px solid #2a3347;border-radius:8px;padding:12px 18px;font-size:13px;color:#e2e8f0;z-index:2000;opacity:0;transform:translateY(8px);transition:all .2s;pointer-events:none}
+#toast.show{opacity:1;transform:translateY(0)}
+#toast.success{border-color:#22c55e;color:#22c55e}
+#toast.error{border-color:#ef4444;color:#ef4444}
+
+/* Mobile card view */
+@media(max-width:768px){
+  .stats-bar{grid-template-columns:repeat(3,1fr)}
+  .stats-bar .stat:nth-child(4),.stats-bar .stat:nth-child(5){grid-column:span 1}
+  #detail-panel{width:100%;right:-100%}
+  .filter-row select{min-width:100px}
+  table{min-width:700px}
+}
+@media(max-width:480px){
+  .stats-bar{grid-template-columns:1fr 1fr}
+  .wrap{padding:12px 16px}
+}
+</style>
+</head>
+<body>
+
+<!-- PIN overlay -->
+<div id="pin-overlay">
+  <div class="pin-box">
+    <div class="pin-logo">⚡ Iron Tiger Digital</div>
+    <div class="pin-sub">Lead CRM — Enter access PIN</div>
+    <input type="password" id="pin-input" placeholder="PIN" maxlength="20" autocomplete="current-password">
+    <button id="pin-submit">Unlock</button>
+    <div class="pin-error" id="pin-error"></div>
+  </div>
+</div>
+
+<!-- Main UI -->
+<div class="wrap">
+  <div class="header">
+    <div>
+      <div class="logo">⚡ Iron Tiger Digital</div>
+      <div style="font-size:12px;color:#475569;margin-top:2px">Lead CRM — Voice + Form Unified</div>
+    </div>
+    <div class="header-right">
+      <span class="last-refresh" id="last-refresh"></span>
+      <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-bar" id="stats-bar">
+    <div class="stat"><div class="stat-val v-orange" id="s-total">—</div><div class="stat-label">Total Leads</div></div>
+    <div class="stat"><div class="stat-val v-blue" id="s-voice">—</div><div class="stat-label">Voice Leads</div></div>
+    <div class="stat"><div class="stat-val v-purple" id="s-form">—</div><div class="stat-label">Form Leads</div></div>
+    <div class="stat"><div class="stat-val v-red" id="s-emergency">—</div><div class="stat-label">Emergency</div></div>
+    <div class="stat"><div class="stat-val v-green" id="s-week">—</div><div class="stat-label">This Week</div></div>
+  </div>
+
+  <!-- Filters -->
+  <div class="filter-row">
+    <select id="f-site"><option value="">All Sites</option></select>
+    <select id="f-source">
+      <option value="">All Sources</option>
+      <option value="voice">Voice</option>
+      <option value="form">Form</option>
+      <option value="voice+form">Merged</option>
+    </select>
+    <select id="f-urgency">
+      <option value="">All Urgency</option>
+      <option value="emergency">Emergency</option>
+      <option value="same">Same-Day</option>
+      <option value="scheduled">Scheduled</option>
+    </select>
+    <select id="f-status">
+      <option value="">All Status</option>
+      <option value="new">New</option>
+      <option value="contacted">Contacted</option>
+      <option value="qualified">Qualified</option>
+      <option value="closed">Closed</option>
+      <option value="junk">Junk</option>
+    </select>
+    <input type="search" id="f-search" placeholder="Search name, phone, site, service…">
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <div class="loading" id="loading-state">
+      <div class="spinner"></div>
+      Loading leads…
+    </div>
+    <div class="empty hidden" id="empty-state">No leads match your filters.</div>
+    <table id="leads-table" class="hidden">
+      <thead>
+        <tr>
+          <th data-col="timestamp">Date/Time</th>
+          <th data-col="site">Site</th>
+          <th data-col="source">Src</th>
+          <th data-col="name">Name</th>
+          <th data-col="phone">Phone</th>
+          <th data-col="service">Service</th>
+          <th data-col="urgency">Urgency</th>
+          <th data-col="status">Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="leads-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Detail panel -->
+<div id="detail-panel">
+  <div class="detail-header">
+    <div class="detail-title" id="detail-name">Lead Detail</div>
+    <button class="detail-close" id="detail-close">✕</button>
+  </div>
+  <div class="detail-body" id="detail-body"></div>
+  <div class="detail-actions" id="detail-actions"></div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ─── State ─────────────────────────────────────────────────────────────────
+const API = 'https://lead-manager-api.irontigerdigital.workers.dev';
+let PIN = sessionStorage.getItem('crm_pin') || '';
+let allLeads = [];
+let sortCol = 'timestamp';
+let sortDir = 'desc';
+let selectedId = null;
+let refreshTimer = null;
+
+// ─── PIN Auth ───────────────────────────────────────────────────────────────
+const pinOverlay = document.getElementById('pin-overlay');
+const pinInput   = document.getElementById('pin-input');
+const pinSubmit  = document.getElementById('pin-submit');
+const pinError   = document.getElementById('pin-error');
+
+function tryPin(pin) {
+  PIN = pin;
+  sessionStorage.setItem('crm_pin', pin);
+  pinError.textContent = '';
+  loadLeads();
+}
+
+pinSubmit.addEventListener('click', () => {
+  const val = pinInput.value.trim();
+  if (!val) { pinError.textContent = 'Enter a PIN.'; return; }
+  tryPin(val);
+});
+pinInput.addEventListener('keydown', e => { if (e.key === 'Enter') pinSubmit.click(); });
+
+if (PIN) {
+  pinOverlay.classList.add('hidden');
+  loadLeads();
+} else {
+  pinOverlay.classList.remove('hidden');
+}
+
+// ─── Fetch leads ────────────────────────────────────────────────────────────
+async function loadLeads() {
+  setLoading(true);
+  try {
+    const res = await fetch(`${API}/api/leads?pin=${encodeURIComponent(PIN)}`);
+    if (res.status === 401) {
+      pinError.textContent = 'Wrong PIN — try again.';
+      pinOverlay.classList.remove('hidden');
+      sessionStorage.removeItem('crm_pin');
+      PIN = '';
+      setLoading(false);
+      return;
+    }
+    const data = await res.json();
+    pinOverlay.classList.add('hidden');
+    allLeads = data.leads || [];
+    buildSiteFilter();
+    updateStats();
+    renderTable();
+    document.getElementById('last-refresh').textContent =
+      'Updated ' + new Date().toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
+  } catch(e) {
+    showToast('Fetch error: ' + e.message, 'error');
+    setLoading(false);
+  }
+}
+
+function setLoading(on) {
+  document.getElementById('loading-state').classList.toggle('hidden', !on);
+  document.getElementById('leads-table').classList.toggle('hidden', on);
+  document.getElementById('empty-state').classList.add('hidden');
+}
+
+// ─── Stats ──────────────────────────────────────────────────────────────────
+function updateStats() {
+  const now = Date.now();
+  const weekAgo = now - 7*24*60*60*1000;
+  const voice = allLeads.filter(l => l.source === 'voice' || l.source === 'voice+form').length;
+  const form  = allLeads.filter(l => l.source === 'form'  || l.source === 'voice+form').length;
+  const emerg = allLeads.filter(l => urgencyClass(l.urgency) === 'emergency').length;
+  const week  = allLeads.filter(l => new Date(l.timestamp).getTime() >= weekAgo).length;
+
+  document.getElementById('s-total').textContent     = allLeads.length;
+  document.getElementById('s-voice').textContent     = voice;
+  document.getElementById('s-form').textContent      = form;
+  document.getElementById('s-emergency').textContent = emerg;
+  document.getElementById('s-week').textContent      = week;
+}
+
+// ─── Site filter options ─────────────────────────────────────────────────────
+function buildSiteFilter() {
+  const sites = [...new Set(allLeads.map(l => l.site).filter(Boolean))].sort();
+  const sel = document.getElementById('f-site');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All Sites</option>' +
+    sites.map(s => `<option value="${esc(s)}"${s===cur?' selected':''}>${esc(s)}</option>`).join('');
+}
+
+// ─── Filter & sort ──────────────────────────────────────────────────────────
+function getFiltered() {
+  const site   = document.getElementById('f-site').value.toLowerCase();
+  const source = document.getElementById('f-source').value.toLowerCase();
+  const urgency = document.getElementById('f-urgency').value.toLowerCase();
+  const status = document.getElementById('f-status').value.toLowerCase();
+  const q      = document.getElementById('f-search').value.toLowerCase();
+
+  return allLeads.filter(l => {
+    if (site   && (l.site   || '').toLowerCase() !== site)   return false;
+    if (source && !l.source.includes(source))                return false;
+    if (status && l.status !== status)                       return false;
+    if (urgency) {
+      const uc = urgencyClass(l.urgency);
+      if (urgency === 'emergency' && uc !== 'emergency')     return false;
+      if (urgency === 'same'      && uc !== 'same')          return false;
+      if (urgency === 'scheduled' && uc !== 'scheduled')     return false;
+    }
+    if (q) {
+      const hay = [l.name,l.phone,l.site,l.service,l.address,l.summary].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b) => {
+    let av = a[sortCol] || '', bv = b[sortCol] || '';
+    if (sortCol === 'timestamp') { av = new Date(av); bv = new Date(bv); }
+    else { av = String(av).toLowerCase(); bv = String(bv).toLowerCase(); }
+    if (av < bv) return sortDir === 'asc' ? -1 : 1;
+    if (av > bv) return sortDir === 'asc' ?  1 : -1;
+    return 0;
+  });
+}
+
+// ─── Render table ────────────────────────────────────────────────────────────
+function renderTable() {
+  const leads = getFiltered();
+  const tbody = document.getElementById('leads-tbody');
+  const table = document.getElementById('leads-table');
+  const empty = document.getElementById('empty-state');
+  const loading = document.getElementById('loading-state');
+
+  loading.classList.add('hidden');
+
+  if (!leads.length) {
+    table.classList.add('hidden');
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  table.classList.remove('hidden');
+
+  tbody.innerHTML = leads.map(l => {
+    const ts = fmtDate(l.timestamp);
+    const src = sourceBadge(l.source);
+    const urg = urgencyPill(l.urgency);
+    const statusOpts = ['new','contacted','qualified','closed','junk'].map(s =>
+      `<option value="${s}"${l.status===s?' selected':''}>${cap(s)}</option>`
+    ).join('');
+    const selected = selectedId === l.id ? ' selected' : '';
+    return `<tr data-id="${esc(l.id)}"${selected}>
+      <td style="color:#64748b;font-size:12px;white-space:nowrap">${ts}</td>
+      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#94a3b8" title="${esc(l.site)}">${esc(l.site||'—')}</td>
+      <td>${src}</td>
+      <td style="font-weight:600">${esc(l.name||'Unknown')}</td>
+      <td style="font-size:12px;color:#94a3b8">${fmtPhone(l.phone)}</td>
+      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#94a3b8" title="${esc(l.service)}">${esc(l.service||'—')}</td>
+      <td>${urg}</td>
+      <td>
+        <select class="status-select status-${l.status||'new'}" data-id="${esc(l.id)}"
+          onclick="event.stopPropagation()" onchange="changeStatus(this)">
+          ${statusOpts}
+        </select>
+      </td>
+      <td onclick="event.stopPropagation()">
+        ${l.phone ? `<a href="tel:${esc(l.phone)}" style="color:#f97316;font-size:11px;text-decoration:none" title="Call">📞</a>` : ''}
+        ${l.recording_url ? ` <span style="cursor:pointer;font-size:11px;color:#3b82f6" onclick="openDetail('${esc(l.id)}')" title="Has recording">🎙</span>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Row click → open detail
+  tbody.querySelectorAll('tr').forEach(row => {
+    row.addEventListener('click', () => openDetail(row.dataset.id));
+  });
+
+  // Sort header highlights
+  document.querySelectorAll('thead th[data-col]').forEach(th => {
+    th.classList.remove('sort-asc','sort-desc');
+    if (th.dataset.col === sortCol) th.classList.add(sortDir==='asc'?'sort-asc':'sort-desc');
+  });
+}
+
+// ─── Sort header clicks ───────────────────────────────────────────────────────
+document.querySelectorAll('thead th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortCol === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    else { sortCol = col; sortDir = 'desc'; }
+    renderTable();
+  });
+});
+
+// ─── Filter listeners ────────────────────────────────────────────────────────
+['f-site','f-source','f-urgency','f-status','f-search'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => renderTable());
+});
+
+// ─── Status update ──────────────────────────────────────────────────────────
+async function changeStatus(sel) {
+  const id     = sel.dataset.id;
+  const status = sel.value;
+  sel.className = `status-select status-${status}`;
+  try {
+    const res = await fetch(`${API}/api/leads/${encodeURIComponent(id)}/status?pin=${encodeURIComponent(PIN)}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ status })
+    });
+    if (!res.ok) throw new Error('Server error');
+    // Update local state
+    const lead = allLeads.find(l => l.id === id);
+    if (lead) lead.status = status;
+    showToast('Status updated → ' + cap(status), 'success');
+    updateStats();
+  } catch(e) {
+    showToast('Update failed: ' + e.message, 'error');
+  }
+}
+
+// ─── Detail panel ────────────────────────────────────────────────────────────
+async function openDetail(id) {
+  selectedId = id;
+  renderTable();
+  const panel = document.getElementById('detail-panel');
+  const body  = document.getElementById('detail-body');
+  const name  = document.getElementById('detail-name');
+  const acts  = document.getElementById('detail-actions');
+  panel.classList.add('open');
+
+  // Find in local state first
+  let lead = allLeads.find(l => l.id === id);
+
+  // If voice lead without transcript, fetch detail
+  if (lead && lead.source !== 'form' && !lead.transcript) {
+    try {
+      const res = await fetch(`${API}/api/leads/${encodeURIComponent(id)}?pin=${encodeURIComponent(PIN)}`);
+      if (res.ok) { const d = await res.json(); lead = { ...lead, ...d }; }
+    } catch(e) {}
+  }
+
+  if (!lead) { body.innerHTML = '<div class="empty">Lead not found.</div>'; return; }
+
+  name.textContent = lead.name || 'Lead Detail';
+
+  const mapUrl = lead.address
+    ? `https://www.google.com/maps/search/${encodeURIComponent(lead.address)}`
+    : null;
+
+  const rows = [
+    ['Site',     lead.site],
+    ['Source',   lead.source],
+    ['Phone',    lead.phone ? `<a href="tel:${esc(lead.phone)}" style="color:#f97316">${fmtPhone(lead.phone)}</a>` : null],
+    ['Email',    lead.email ? `<a href="mailto:${esc(lead.email)}" style="color:#f97316">${esc(lead.email)}</a>` : null],
+    ['Address',  lead.address ? (mapUrl ? `<a href="${mapUrl}" target="_blank" style="color:#f97316">${esc(lead.address)}</a>` : esc(lead.address)) : null],
+    ['Service',  lead.service],
+    ['Urgency',  lead.urgency ? urgencyPill(lead.urgency) : null],
+    ['Quality',  lead.lead_quality || null],
+    ['Status',   lead.status ? `<span class="status-${lead.status}" style="font-weight:700">${cap(lead.status)}</span>` : null],
+    ['Time',     fmtDateFull(lead.timestamp)],
+  ].filter(([,v]) => v);
+
+  let html = `<div class="detail-section">
+    <div class="detail-section-title">Contact Info</div>
+    ${rows.map(([label,val]) => `<div class="detail-row"><div class="detail-label">${label}</div><div class="detail-value">${val}</div></div>`).join('')}
+  </div>`;
+
+  if (lead.summary) {
+    html += `<div class="detail-section">
+      <div class="detail-section-title">Summary</div>
+      <div style="font-size:13px;color:#94a3b8;line-height:1.6">${esc(lead.summary)}</div>
+    </div>`;
+  }
+
+  if (lead.recording_url) {
+    html += `<div class="detail-section">
+      <div class="detail-section-title">Recording</div>
+      <audio class="audio-player" controls preload="none" src="${esc(lead.recording_url)}"></audio>
+    </div>`;
+  }
+
+  if (lead.transcript) {
+    html += `<div class="detail-section">
+      <div class="detail-section-title">Transcript</div>
+      <div class="transcript">${formatTranscript(lead.transcript)}</div>
+    </div>`;
+  }
+
+  body.innerHTML = html;
+
+  // Actions
+  const actionBtns = [];
+  if (lead.phone) {
+    actionBtns.push(`<button class="action-btn" onclick="copyPhone('${esc(lead.phone)}')">📋 Copy Phone</button>`);
+    actionBtns.push(`<a href="tel:${esc(lead.phone)}" class="action-btn" style="text-decoration:none">📞 Call</a>`);
+  }
+  if (mapUrl) {
+    actionBtns.push(`<a href="${mapUrl}" target="_blank" class="action-btn" style="text-decoration:none">📍 Map</a>`);
+  }
+  actionBtns.push(`<button class="action-btn primary" onclick="quickStatus('${esc(id)}','contacted')">✓ Mark Contacted</button>`);
+
+  acts.innerHTML = actionBtns.join('');
+}
+
+document.getElementById('detail-close').addEventListener('click', () => {
+  document.getElementById('detail-panel').classList.remove('open');
+  selectedId = null;
+  renderTable();
+});
+
+async function quickStatus(id, status) {
+  const sel = document.querySelector(`select.status-select[data-id="${id}"]`);
+  if (sel) { sel.value = status; await changeStatus(sel); }
+  else {
+    try {
+      await fetch(`${API}/api/leads/${encodeURIComponent(id)}/status?pin=${encodeURIComponent(PIN)}`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ status })
+      });
+      const lead = allLeads.find(l => l.id === id);
+      if (lead) lead.status = status;
+      showToast('Marked as ' + cap(status), 'success');
+      renderTable();
+    } catch(e) { showToast('Failed: ' + e.message, 'error'); }
+  }
+}
+
+function copyPhone(phone) {
+  navigator.clipboard.writeText(phone).then(() => showToast('Phone copied!', 'success'));
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
+
+function fmtPhone(p) {
+  if (!p) return '—';
+  const d = p.replace(/\D/g,'');
+  if (d.length === 11) return `(${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  return p;
+}
+
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffH  = diffMs / 3600000;
+  if (diffH < 24) {
+    return d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) + ' today';
+  }
+  if (diffH < 48) return 'Yesterday ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' +
+    d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+}
+
+function fmtDateFull(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString('en-US',{
+    month:'short',day:'numeric',year:'numeric',
+    hour:'numeric',minute:'2-digit',hour12:true,timeZoneName:'short'
+  });
+}
+
+function urgencyClass(u) {
+  if (!u) return 'unknown';
+  const l = u.toLowerCase();
+  if (l.includes('emergency') || l.includes('urgent') || l.includes('asap')) return 'emergency';
+  if (l.includes('same') || l.includes('today') || l.includes('soon')) return 'same';
+  if (l.includes('schedule') || l.includes('flexible') || l.includes('whenever')) return 'scheduled';
+  return 'unknown';
+}
+
+function urgencyPill(u) {
+  const cls = urgencyClass(u);
+  const clsMap = {emergency:'u-emergency',same:'u-same',scheduled:'u-scheduled',unknown:'u-unknown'};
+  const label = u || 'Unknown';
+  return `<span class="urgency-pill ${clsMap[cls]}">${esc(label)}</span>`;
+}
+
+function sourceBadge(s) {
+  if (s === 'voice')      return '<span class="badge badge-voice">📞 Voice</span>';
+  if (s === 'form')       return '<span class="badge badge-form">📝 Form</span>';
+  if (s === 'voice+form') return '<span class="badge badge-both">🔀 Both</span>';
+  return `<span class="badge">${esc(s)}</span>`;
+}
+
+function formatTranscript(t) {
+  if (!t) return '';
+  // If it's an array of utterances [{role, content}]
+  if (Array.isArray(t)) {
+    return t.map(u => {
+      const role = (u.role || u.speaker || 'unknown').toLowerCase();
+      const cls  = role === 'agent' ? 'speaker-agent' : 'speaker-user';
+      return `<div class="transcript-block"><span class="${cls}">${cap(role)}:</span> ${esc(u.content || u.text || '')}</div>`;
+    }).join('');
+  }
+  // Plain text — try to detect speaker labels like "Agent:" or "User:"
+  return esc(String(t))
+    .replace(/\b(Agent|Sarah):\s*/g, '<span class="speaker-agent">$1:</span> ')
+    .replace(/\b(User|Caller|Customer):\s*/g, '<span class="speaker-user">$1:</span> ');
+}
+
+// ─── Toast ───────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ''; }, 3000);
+}
+
+// ─── Auto-refresh ────────────────────────────────────────────────────────────
+document.getElementById('refresh-btn').addEventListener('click', () => {
+  if (PIN) loadLeads();
+});
+
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => { if (PIN) { loadLeads(); scheduleRefresh(); } }, 60000);
+}
+scheduleRefresh();
+</script>
+</body>
+</html>
