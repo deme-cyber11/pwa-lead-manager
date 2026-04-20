@@ -404,7 +404,7 @@ function renderTable() {
         </select>
       </td>
       <td onclick="event.stopPropagation()">
-        ${l.phone ? `<a href="tel:${esc(l.phone)}" style="color:#f97316;font-size:11px;text-decoration:none" title="Call">📞</a>` : ''}
+        ${l.phone ? `<a href="tel:${esc(toTelHref(l.phone))}" style="color:#f97316;font-size:11px;text-decoration:none" title="Call">📞</a>` : ''}
         ${l.recording_url ? ` <span style="cursor:pointer;font-size:11px;color:#3b82f6" onclick="openDetail('${esc(l.id)}')" title="Has recording">🎙</span>` : ''}
       </td>
     </tr>`;
@@ -491,7 +491,7 @@ async function openDetail(id) {
   const rows = [
     ['Site',     lead.site],
     ['Source',   lead.source],
-    ['Phone',    lead.phone ? `<a href="tel:${esc(lead.phone)}" style="color:#f97316">${fmtPhone(lead.phone)}</a>` : null],
+    ['Phone',    lead.phone ? `<a href="tel:${esc(toTelHref(lead.phone))}" style="color:#f97316">${fmtPhone(lead.phone)}</a>` : null],
     ['Email',    lead.email ? `<a href="mailto:${esc(lead.email)}" style="color:#f97316">${esc(lead.email)}</a>` : null],
     ['Address',  lead.address ? (mapUrl ? `<a href="${mapUrl}" target="_blank" style="color:#f97316">${esc(lead.address)}</a>` : esc(lead.address)) : null],
     ['Service',  lead.service],
@@ -533,7 +533,7 @@ async function openDetail(id) {
   const actionBtns = [];
   if (lead.phone) {
     actionBtns.push(`<button class="action-btn" onclick="copyPhone('${esc(lead.phone)}')">📋 Copy Phone</button>`);
-    actionBtns.push(`<a href="tel:${esc(lead.phone)}" class="action-btn" style="text-decoration:none">📞 Call</a>`);
+    actionBtns.push(`<a href="tel:${esc(toTelHref(lead.phone))}" class="action-btn" style="text-decoration:none">📞 Call</a>`);
   }
   if (mapUrl) {
     actionBtns.push(`<a href="${mapUrl}" target="_blank" class="action-btn" style="text-decoration:none">📍 Map</a>`);
@@ -579,6 +579,14 @@ function fmtPhone(p) {
   const d = p.replace(/\D/g,'');
   if (d.length === 11) return `(${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
   if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  return p;
+}
+
+function toTelHref(p) {
+  if (!p) return '';
+  const d = p.replace(/\D/g,'');
+  if (d.length === 10) return `+1${d}`;
+  if (d.length === 11 && d[0] === '1') return `+${d}`;
   return p;
 }
 
