@@ -182,6 +182,30 @@ export default {
       return await handleLeadIngest(request, env);
     }
 
+    // ── Retell Voice Agent: report-spam (public, secret-gated) ──
+    if (path === '/report-spam' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        if (body.secret !== env.WEBHOOK_SECRET) return json({ error: 'Forbidden' }, 403);
+        const rawNumber = body.caller_number || body.from_number || '';
+        const number = String(rawNumber).startsWith('+') ? rawNumber : `+1${String(rawNumber).replace(/\D/g, '')}`;
+        if (!number || number.length < 10) return json({ error: 'invalid number' }, 400);
+        const reason = body.reason || 'retell-voice-agent';
+        const callId = body.call_id || '';
+        if (env.SPAM_LOG) {
+          await env.SPAM_LOG.put(`dyn_block:${number}`, JSON.stringify({
+            reason: `retell:${reason}`,
+            blocked_at: new Date().toISOString(),
+            source_call_id: callId,
+            flagged_by: 'retell-agent'
+          }), { expirationTtl: 5184000 }); // 60 days
+        }
+        return json({ ok: true, blocked: number, reason });
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
     // ── Stripe Checkout ──
     if (path === '/stripe/checkout' && request.method === 'POST') {
       const PRICE_IDS = {
@@ -262,26 +286,6 @@ export default {
           await env.SPAM_LOG.put(`dyn_block:${number}`, JSON.stringify({
             reason, blocked_at: new Date().toISOString()
           }), { expirationTtl: 2592000 }); // 30 days
-        }
-        return json({ ok: true, blocked: number, reason });
-      }
-
-      // POST /report-spam — Retell voice agent flags a caller as spam, auto-adds to dynamic blocklist
-      if (path === '/report-spam' && request.method === 'POST') {
-        const body = await request.json();
-        if (body.secret !== env.WEBHOOK_SECRET) return new Response('Forbidden', { status: 403 });
-        const rawNumber = body.caller_number || body.from_number || '';
-        const number = rawNumber.startsWith('+') ? rawNumber : `+1${String(rawNumber).replace(/\D/g, '')}`;
-        if (!number || number.length < 10) return json({ error: 'invalid number' }, 400);
-        const reason = body.reason || 'retell-voice-agent';
-        const callId = body.call_id || '';
-        if (env.SPAM_LOG) {
-          await env.SPAM_LOG.put(`dyn_block:${number}`, JSON.stringify({
-            reason: `retell:${reason}`,
-            blocked_at: new Date().toISOString(),
-            source_call_id: callId,
-            flagged_by: 'retell-agent'
-          }), { expirationTtl: 5184000 }); // 60 days
         }
         return json({ ok: true, blocked: number, reason });
       }
