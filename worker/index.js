@@ -206,6 +206,54 @@ export default {
       }
     }
 
+    // ── Retell Voice Agent: Twilio → Retell SIP bridge (public) ──
+    // Twilio posts here when call hits the Bayou Teche number.
+    // We register the call with Retell, then return TwiML that dials Retell over SIP.
+    if (path.startsWith('/twilio-voice/') && request.method === 'POST') {
+      const agentId = path.slice('/twilio-voice/'.length);
+      try {
+        const form = await request.formData();
+        const from = form.get('From') || '';
+        const to = form.get('To') || '';
+        const callSid = form.get('CallSid') || '';
+
+        // Blocklist check — both static and KV-stored dynamic blocks
+        const blocked = BLOCKED_CALLERS.has(from) ||
+          (env.SPAM_LOG && await env.SPAM_LOG.get(`dyn_block:${from}`));
+        if (blocked) {
+          return twiml('<?xml version="1.0" encoding="UTF-8"?><Response><Reject reason="busy"/></Response>');
+        }
+
+        const reg = await fetch('https://api.retellai.com/v2/register-phone-call', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${env.RETELL_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            agent_id: agentId,
+            from_number: from,
+            to_number: to,
+            direction: 'inbound',
+            metadata: { twilio_call_sid: callSid }
+          })
+        });
+
+        if (!reg.ok) {
+          const err = await reg.text();
+          console.error('Retell register failed:', reg.status, err);
+          return twiml('<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna">Sorry, we are having trouble connecting your call. Please try again shortly.</Say><Hangup/></Response>');
+        }
+
+        const { call_id } = await reg.json();
+        const sip = `sip:${call_id}@sip.retellai.com;transport=tcp`;
+        return twiml(`<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true"><Sip>${sip}</Sip></Dial></Response>`);
+      } catch (e) {
+        console.error('twilio-voice error:', e.message);
+        return twiml('<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, system error.</Say><Hangup/></Response>');
+      }
+    }
+
     // ── Stripe Checkout ──
     if (path === '/stripe/checkout' && request.method === 'POST') {
       const PRICE_IDS = {
@@ -848,6 +896,21 @@ async function handleLeadIngest(request, env) {
           htmlContent: htmlBody
         })
       });
+    }
+
+    // ── Auto-SMS form link for voice leads (Retell → SMS handoff) ──
+    // Only fires for calls coming from the voice agent. Sends the caller a link
+    // to the site's intake form so they can fill in details at their own pace.
+    if (phone && (fields._source === 'retell-voice' || source.includes('retell'))) {
+      const siteDomain = fields.site_domain || source;
+      const formUrl = `https://${siteDomain}/estimate/`;
+      const smsBody = `Hey ${name.split(' ')[0] || 'there'}, this is Sarah from Bayou Teche Septic. Here's the quick form I mentioned — fill this out and upload any pics if ya got 'em, then my team'll reach out to lock in a time: ${formUrl}`;
+      const fromNumber = fields.to_number || '+13374920960';
+      try {
+        await twilioPost(env, 'Messages.json', { From: fromNumber, To: phone, Body: smsBody });
+      } catch (e) {
+        console.error('SMS form send failed:', e.message);
+      }
     }
 
     const tgText = `🔔 <b>New Lead</b>\n<b>Site:</b> ${source}\n<b>Name:</b> ${name}` +
