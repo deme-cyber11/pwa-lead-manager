@@ -780,12 +780,15 @@ async function handleLeadIngest(request, env) {
     // Honeypot
     if (fields._honey || fields.website) return json({ success: true });
 
-    const name    = fields.name    || fields.Name    || 'Unknown';
+    const name    = fields.name    || fields.Name    || fields.customer_name || 'Unknown';
     const email   = fields.email   || fields.Email   || '';
     const phone   = fields.phone   || fields.Phone   || '';
-    const message = fields.message || fields.Message || fields.description || '';
     const address = fields.address || fields.Address || '';
-    const source  = fields._source || (request.headers.get('Referer') || 'Unknown Site').replace(/https?:\/\//, '').split('/')[0];
+    const service = fields.service_requested || '';
+    const urgency = fields.urgency || '';
+    const message = fields.message || fields.Message || fields.problem_description || fields.description
+                  || [service, urgency].filter(Boolean).join(' — ') || '';
+    const source  = fields.site_domain || fields._source || (request.headers.get('Referer') || 'Unknown Site').replace(/https?:\/\//, '').split('/')[0];
     const subject = fields._subject || `New Lead — ${source}`;
 
     if (!email && !phone) return json({ error: 'No contact info' }, 400);
@@ -796,6 +799,8 @@ async function handleLeadIngest(request, env) {
       email   ? ['Email',   `<a href="mailto:${email}">${email}</a>`]   : null,
       phone   ? ['Phone',   `<a href="tel:${phone}">${phone}</a>`]       : null,
       address ? ['Address', address] : null,
+      service ? ['Service', service] : null,
+      urgency ? ['Urgency', urgency] : null,
       message ? ['Message', message] : null,
     ].filter(Boolean);
 
@@ -821,10 +826,12 @@ async function handleLeadIngest(request, env) {
       });
     }
 
-    const tgText = `🔔 <b>New Form Lead</b>\n<b>Site:</b> ${source}\n<b>Name:</b> ${name}` +
+    const tgText = `🔔 <b>New Lead</b>\n<b>Site:</b> ${source}\n<b>Name:</b> ${name}` +
       (phone   ? `\n<b>Phone:</b> ${phone}`   : '') +
       (email   ? `\n<b>Email:</b> ${email}`   : '') +
       (address ? `\n<b>Address:</b> ${address}` : '') +
+      (service ? `\n<b>Service:</b> ${service}` : '') +
+      (urgency ? `\n<b>Urgency:</b> ${urgency}` : '') +
       (message ? `\n<b>Note:</b> ${message.slice(0, 200)}` : '');
     await sendTelegramAlert(env, tgText);
 
