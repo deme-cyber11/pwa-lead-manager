@@ -688,6 +688,42 @@ async function handleIncomingSMS(request, env) {
     );
   }
 
+  // Persist SMS to KV so it appears in the PWA CRM dashboard
+  if (from && env.SPAM_LOG) {
+    try {
+      const ts = Date.now();
+      const phoneHash = from.replace(/\D/g, '').slice(-10);
+      const smsKey = `sms:${ts}:${phoneHash}`;
+      const smsRecord = {
+        id: smsKey,
+        source: 'sms',
+        timestamp: new Date(ts).toISOString(),
+        site: siteLabel,
+        phone: from,
+        to,
+        name: 'SMS Lead',
+        email: '',
+        address: '',
+        service: '',
+        urgency: '',
+        status: 'new',
+        summary: (body || '').slice(0, 500),
+        recording_url: null,
+        transcript: null
+      };
+      await env.SPAM_LOG.put(smsKey, JSON.stringify(smsRecord), { expirationTtl: 7776000 });
+
+      // Update unified leads index
+      const idxRaw = await env.SPAM_LOG.get('leads:index');
+      const idx = idxRaw ? JSON.parse(idxRaw) : [];
+      idx.unshift(smsKey);
+      if (idx.length > 500) idx.splice(500);
+      await env.SPAM_LOG.put('leads:index', JSON.stringify(idx), { expirationTtl: 7776000 });
+    } catch (e) {
+      console.error('KV SMS store failed:', e.message);
+    }
+  }
+
   await sendTelegramAlert(env,
     `💬 <b>New SMS — ${siteLabel}</b>\nFrom: ${from}\n\n${body?.substring(0, 300) || '(no body)'}`
   );
@@ -1147,8 +1183,8 @@ async function getUnifiedLeads(url, env) {
 
 async function getLeadDetail(leadId, env) {
   try {
-    // Try KV first
-    if (env.SPAM_LOG && leadId.startsWith('lead:')) {
+    // Try KV first (form leads and SMS leads both stored in KV)
+    if (env.SPAM_LOG && (leadId.startsWith('lead:') || leadId.startsWith('sms:'))) {
       const raw = await env.SPAM_LOG.get(leadId);
       if (raw) {
         const lead = JSON.parse(raw);
