@@ -406,6 +406,15 @@ const BLOCKED_CALLERS = new Set([
 // Numbers to exclude from the leads dashboard (internal test calls etc.)
 const INTERNAL_NUMBERS = new Set(['+17344761457']);
 
+// Form lead spam: known bot emails and message keywords (case-insensitive)
+const SPAM_EMAILS = new Set([
+  'ericjonesmyemail@gmail.com',
+]);
+const SPAM_KEYWORDS = [
+  'web visitors into leads',
+  'visitorsintoleads',
+];
+
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
 
 async function handleVoiceCall(request, env) {
@@ -915,6 +924,13 @@ async function handleLeadIngest(request, env) {
 
     // Honeypot
     if (fields._honey || fields.website) return json({ success: true });
+
+    // Form spam filter — known bot emails + message keyword patterns
+    const rawEmail = (fields.email || fields.Email || '').toLowerCase().trim();
+    const rawMsg   = (fields.message || fields.Message || fields.problem_description || fields.description || '').toLowerCase();
+    if (SPAM_EMAILS.has(rawEmail) || SPAM_KEYWORDS.some(kw => rawMsg.includes(kw))) {
+      return json({ success: true }); // silent drop
+    }
 
     const name    = fields.name    || fields.Name    || fields.customer_name || 'Unknown';
     const email   = fields.email   || fields.Email   || '';
