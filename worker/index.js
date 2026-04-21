@@ -400,7 +400,11 @@ const BLOCKED_CALLERS = new Set([
   '+14696636976',  // Angi's List — 2026-04-01
   '+13372423834',  // Angi's List — Lafayette Septic — 2026-04-01
   '+16233230339',  // Angi's List — PHX Pool — 2026-04-02
+  '+17344761457',  // Costa personal cell — exclude from leads
 ]);
+
+// Numbers to exclude from the leads dashboard (internal test calls etc.)
+const INTERNAL_NUMBERS = new Set(['+17344761457']);
 
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
 
@@ -1102,6 +1106,7 @@ async function getUnifiedLeads(url, env) {
           for (const call of calls) {
             const analysis = call.call_analysis || {};
             const phone = call.from_number || call.caller_id || '';
+            if (INTERNAL_NUMBERS.has(phone)) continue;
             const ts = call.start_timestamp
               ? new Date(call.start_timestamp).toISOString()
               : new Date(call.created_at || Date.now()).toISOString();
