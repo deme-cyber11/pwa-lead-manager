@@ -401,6 +401,7 @@ const BLOCKED_CALLERS = new Set([
   '+13372423834',  // Angi's List — Lafayette Septic — 2026-04-01
   '+16233230339',  // Angi's List — PHX Pool — 2026-04-02
   '+17344761457',  // Costa personal cell — exclude from leads
+  '+19360317459',  // form spam — BANGE backpack bot — 2026-04-21
 ]);
 
 // Numbers to exclude from the leads dashboard (internal test calls etc.)
@@ -409,10 +410,19 @@ const INTERNAL_NUMBERS = new Set(['+17344761457']);
 // Form lead spam: known bot emails and message keywords (case-insensitive)
 const SPAM_EMAILS = new Set([
   'ericjonesmyemail@gmail.com',
+  'sales@bruntnell.bangeshop.com',
+]);
+// Spam email domains — any email @these domains is silently dropped
+const SPAM_DOMAINS = new Set([
+  'bangeshop.com',
 ]);
 const SPAM_KEYWORDS = [
   'web visitors into leads',
   'visitorsintoleads',
+  'bange backpack',
+  'sling bag',
+  'anti-theft bag',
+  'built-in usb',
 ];
 
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
@@ -925,10 +935,15 @@ async function handleLeadIngest(request, env) {
     // Honeypot
     if (fields._honey || fields.website) return json({ success: true });
 
-    // Form spam filter — known bot emails + message keyword patterns
-    const rawEmail = (fields.email || fields.Email || '').toLowerCase().trim();
-    const rawMsg   = (fields.message || fields.Message || fields.problem_description || fields.description || '').toLowerCase();
-    if (SPAM_EMAILS.has(rawEmail) || SPAM_KEYWORDS.some(kw => rawMsg.includes(kw))) {
+    // Form spam filter — known bot emails, domains, and message keyword patterns
+    const rawEmail  = (fields.email || fields.Email || '').toLowerCase().trim();
+    const emailDomain = rawEmail.split('@')[1] || '';
+    const rawMsg    = (fields.message || fields.Message || fields.problem_description || fields.description || '').toLowerCase();
+    if (
+      SPAM_EMAILS.has(rawEmail) ||
+      SPAM_DOMAINS.has(emailDomain) ||
+      SPAM_KEYWORDS.some(kw => rawMsg.includes(kw))
+    ) {
       return json({ success: true }); // silent drop
     }
 
