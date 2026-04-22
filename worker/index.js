@@ -8,7 +8,7 @@ const COSTA_PHONE = '+17344761457';
 // Key: Twilio inbound number | Value: forward-to number
 // If a number isn't listed here, calls forward to COSTA_PHONE (default)
 const SITE_FORWARD = {
-  '+16232949154': '+18327701658',  // PHX Pool Resurfacing → tenant (updated 2026-04-03)
+  // PHX Pool Resurfacing forward removed 2026-04-22 per Costa
 };
 
 // Tailored missed-call SMS per Twilio number
@@ -21,7 +21,7 @@ const MISSED_CALL_MESSAGES = {
   '+18653788377': "Hey, I'm sorry I missed your call! Is it your driveway, house exterior, or deck? Please reply with what you need and your location and I'll get right back to you. — Costa | Knox Pressure Pros",
   '+17194968287': "Hey, I'm sorry I missed your call! Is it mold removal, an inspection, or water damage? Please reply with what you need and your location and I'll get right back to you. — Costa | Springs Mold Solutions",
   '+14235891682': "Hey, I'm sorry I missed your call! Is it a full detail, interior cleaning, or paint correction? Please reply with what you need and your location and I'll get right back to you. — Costa | Peak Shine Detailing",
-  '+17192158962': "Hey, I'm sorry I missed your call! Is it refinishing, new installation, or board repairs? Please reply with what you need and your location and I'll get right back to you. — Costa | Elkhorn Hardwood",
+  '+14027714422': "Hey, I'm sorry I missed your call! Is it refinishing, new installation, or board repairs? Please reply with what you need and your location and I'll get right back to you. — Costa | Elkhorn Hardwood",
   '+15094619375': "Hey, I'm sorry I missed your call! Is it refinishing, new installation, or board repairs? Please reply with what you need and your location and I'll get right back to you. — Costa | Selkirk Hardwood",
   '+16232949154': "Hey, I'm sorry I missed your call! Is it replastering, resurfacing, or tile work? Please reply with what you need and I'll get right back to you. — Costa | PHX Pool Resurfacing",
   '+18707713364': "Hey, I'm sorry I missed your call! Is it tree removal, trimming, or storm cleanup? Please reply with what you need and I'll get right back to you. — Costa | Delta Tree Doctors",
@@ -39,7 +39,6 @@ const MISSED_CALL_MESSAGES = {
   '+14064767479': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Billings Radon",
   '+19529007486': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Bloomington Bathroom",
   '+14052813672': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Edmond Bathroom",
-  '+14027714422': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Elkhorn Hardwood NE",
   '+18507263411': "Hey, I'm sorry I missed your call! Is it a brake job, diagnostics, battery, or something else? Reply with what you need and I'll get right back to you. — Costa | Tally Mobile Mechanic",
   '+18137233209': "Hey, I'm sorry I missed your call! Please reply with what you need and your address and I'll get right back to you. — Costa | Pool Resurfacing USA",
   '+14073262707': "Hey, I'm sorry I missed your call! Is it a driveway, patio, or pool deck? Please reply with what you need and your address and I'll get right back to you. — Costa | Orlando Concrete Driveway",
@@ -55,7 +54,6 @@ const SITE_LABELS = {
   '+18653788377': 'Knox Pressure',
   '+17194968287': 'Springs Mold',
   '+14235891682': 'Peak Shine Detailing',
-  '+17192158962': 'Elkhorn Hardwood',
   '+15094619375': 'Selkirk Hardwood',
   '+18137233209': 'Pool Directory',
   '+14073262707': 'Orlando Concrete Driveway',
@@ -75,7 +73,7 @@ const SITE_LABELS = {
   '+14064767479': 'Billings Radon',
   '+19529007486': 'Bloomington Bathroom',
   '+14052813672': 'Edmond Bathroom',
-  '+14027714422': 'Elkhorn Hardwood NE',
+  '+14027714422': 'Elkhorn Hardwood',
   '+18507263411': 'Tally Mobile Mechanic',
 };
 
@@ -89,7 +87,6 @@ const SITE_URLS = {
   '+18653788377': 'https://knoxpressurepros.com',
   '+17194968287': 'https://springsmoldsolutions.com',
   '+14235891682': 'https://peakshinedetailing.com',
-  '+17192158962': 'https://elkhornhardwood.com',
   '+15094619375': 'https://selkirkhardwood.com',
   '+18137233209': 'https://poolresurfacingusa.com',
   '+16232949154': 'https://phxpoolresurfacing.com',
