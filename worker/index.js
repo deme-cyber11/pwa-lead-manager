@@ -399,6 +399,7 @@ const BLOCKED_CALLERS = new Set([
   '+16233230339',  // Angi's List — PHX Pool — 2026-04-02
   '+17344761457',  // Costa personal cell — exclude from leads
   '+19360317459',  // form spam — BANGE backpack bot — 2026-04-21
+  '+16072036069',  // spam — Attt Tv cold-call — 2026-04-23
 ]);
 
 // Numbers to exclude from the leads dashboard (internal test calls etc.)
@@ -517,7 +518,7 @@ async function handleVoiceCall(request, env) {
 
   return twiml(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Dial callerId="${from}" timeout="30" action="${workerUrl}/webhook/missed-call?secret=${env.WEBHOOK_SECRET || ''}&amp;site=${encodeURIComponent(siteLabel)}&amp;to=${encodeURIComponent(to)}">
+  <Dial callerId="${to}" timeout="30" action="${workerUrl}/webhook/missed-call?secret=${env.WEBHOOK_SECRET || ''}&amp;site=${encodeURIComponent(siteLabel)}&amp;to=${encodeURIComponent(to)}">
     <Number url="${workerUrl}/webhook/whisper?site=${encodeURIComponent(siteLabel)}">${SITE_FORWARD[to] || COSTA_PHONE}</Number>
   </Dial>
 </Response>`);
