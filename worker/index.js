@@ -409,7 +409,12 @@ const INTERNAL_NUMBERS = new Set(['+17344761457']);
 const SPAM_EMAILS = new Set([
   'ericjonesmyemail@gmail.com',
   'sales@bruntnell.bangeshop.com',
+  'no.reply.charlesjohansen@gmail.com',
 ]);
+// Regex patterns for rotating-name bots (e.g. no.reply.XXX@gmail.com)
+const SPAM_EMAIL_PATTERNS = [
+  /^no\.reply\./i,
+];
 // Spam email domains — any email @these domains is silently dropped
 const SPAM_DOMAINS = new Set([
   'bangeshop.com',
@@ -421,6 +426,9 @@ const SPAM_KEYWORDS = [
   'sling bag',
   'anti-theft bag',
   'built-in usb',
+  'outreach messages directly through',
+  'platform allows sending outreach',
+  'sending outreach messages',
 ];
 
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
@@ -940,6 +948,7 @@ async function handleLeadIngest(request, env) {
     if (
       SPAM_EMAILS.has(rawEmail) ||
       SPAM_DOMAINS.has(emailDomain) ||
+      SPAM_EMAIL_PATTERNS.some(re => re.test(rawEmail)) ||
       SPAM_KEYWORDS.some(kw => rawMsg.includes(kw))
     ) {
       return json({ success: true }); // silent drop
