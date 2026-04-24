@@ -418,6 +418,14 @@ const SPAM_EMAIL_PATTERNS = [
 // Spam email domains — any email @these domains is silently dropped
 const SPAM_DOMAINS = new Set([
   'bangeshop.com',
+  'gmx.com',
+  'gmx.net',
+  'guerrillamail.com',
+  'mailinator.com',
+  'yopmail.com',
+  'throwam.com',
+  'sharklasers.com',
+  'guerrillamailblock.com',
 ]);
 const SPAM_KEYWORDS = [
   'web visitors into leads',
@@ -941,15 +949,29 @@ async function handleLeadIngest(request, env) {
     // Honeypot
     if (fields._honey || fields.website) return json({ success: true });
 
-    // Form spam filter — known bot emails, domains, and message keyword patterns
+    // Form spam filter — known bot emails, domains, message keywords, phone format, URL injection
     const rawEmail  = (fields.email || fields.Email || '').toLowerCase().trim();
     const emailDomain = rawEmail.split('@')[1] || '';
     const rawMsg    = (fields.message || fields.Message || fields.problem_description || fields.description || '').toLowerCase();
+    const rawPhone  = (fields.phone || fields.Phone || '').replace(/\D/g, '');
+
+    // Invalid phone: provided but not 10 or 11 digits (US numbers only)
+    const invalidPhone = rawPhone.length > 0 && rawPhone.length !== 10 && rawPhone.length !== 11;
+    // 11-digit number must start with 1 (country code) — otherwise foreign/fake
+    const invalidCountryCode = rawPhone.length === 11 && rawPhone[0] !== '1';
+
+    // Bot self-injection: site's own domain appearing in the message body
+    const refererDomain = (fields.site_domain || (request.headers.get('Referer') || '').replace(/https?:\/\//, '').split('/')[0] || '').toLowerCase();
+    const urlInMessage = refererDomain && rawMsg.includes(refererDomain);
+
     if (
       SPAM_EMAILS.has(rawEmail) ||
       SPAM_DOMAINS.has(emailDomain) ||
       SPAM_EMAIL_PATTERNS.some(re => re.test(rawEmail)) ||
-      SPAM_KEYWORDS.some(kw => rawMsg.includes(kw))
+      SPAM_KEYWORDS.some(kw => rawMsg.includes(kw)) ||
+      invalidPhone ||
+      invalidCountryCode ||
+      urlInMessage
     ) {
       return json({ success: true }); // silent drop
     }
