@@ -290,6 +290,12 @@ export default {
       }
     }
 
+    // ── Vapi Voice Tool Endpoints — Elise outbound seller ──
+    // Each Elise tool posts to its own URL. Auth via x-vapi-secret header (VAPI_SECRET env).
+    if (path.startsWith('/voice/') && request.method === 'POST') {
+      return await handleVapiTool(request, env, path);
+    }
+
     // ── CRM Lead Dashboard endpoints ──
     // Auth: ?pin= query param OR Authorization: Bearer <pin> OR X-Auth-Token header
     const pinParam = url.searchParams.get('pin');
@@ -397,7 +403,6 @@ const BLOCKED_CALLERS = new Set([
   '+14696636976',  // Angi's List — 2026-04-01
   '+13372423834',  // Angi's List — Lafayette Septic — 2026-04-01
   '+16233230339',  // Angi's List — PHX Pool — 2026-04-02
-  '+17344761457',  // Costa personal cell — exclude from leads
   '+19360317459',  // form spam — BANGE backpack bot — 2026-04-21
   '+16072036069',  // spam — Attt Tv cold-call — 2026-04-23
 ]);
@@ -1360,4 +1365,173 @@ function extractNameFromTranscript(transcript) {
   // Try to find a name from common patterns like "I'm John" or "My name is Jane"
   const match = transcript.match(/(?:my name is|i'm|i am)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)/i);
   return match ? match[1] : null;
+}
+
+// ── Vapi Tool Handler ──────────────────────────────────────────────────────────
+
+async function handleVapiTool(request, env, path) {
+  if (env.VAPI_SECRET) {
+    const secret = request.headers.get('x-vapi-secret');
+    if (secret !== env.VAPI_SECRET) {
+      return json({ results: [{ toolCallId: 'unknown', result: 'Error: unauthorized' }] });
+    }
+  }
+
+  let body;
+  try { body = await request.json(); } catch (e) {
+    return json({ results: [{ toolCallId: 'unknown', result: 'Error: invalid request body' }] });
+  }
+
+  const toolCall = body?.message?.toolCallList?.[0];
+  const toolCallId = toolCall?.id || 'unknown';
+  const callId = body?.message?.call?.id || '';
+  let args = {};
+  try { args = JSON.parse(toolCall?.function?.arguments || '{}'); } catch (e) { /* use empty */ }
+
+  const tool = path.replace('/voice/', '');
+  switch (tool) {
+    case 'book_demo':          return await vapiBookDemo(args, toolCallId, callId, env);
+    case 'save_disposition':   return await vapiSaveDisposition(args, toolCallId, callId, env);
+    case 'transfer_to_owner':  return await vapiTransferToOwner(args, toolCallId, env);
+    case 'request_quote':      return await vapiRequestQuote(args, toolCallId, env);
+    case 'send_demo_link':     return await vapiSendDemoLink(args, toolCallId, env);
+    default: return json({ results: [{ toolCallId, result: 'Error: unknown tool path' }] });
+  }
+}
+
+async function vapiBookDemo(args, toolCallId, callId, env) {
+  const { prospect_id, slot_iso, email, notes } = args;
+
+  if (env.SPAM_LOG) {
+    try {
+      await env.SPAM_LOG.put(`demo_booking:${Date.now()}:${prospect_id}`, JSON.stringify({
+        prospect_id, slot_iso, email, notes, call_id: callId,
+        booked_at: new Date().toISOString(), status: 'pending_calendar'
+      }), { expirationTtl: 7776000 });
+    } catch (e) { /* non-blocking */ }
+  }
+
+  let slotFormatted = slot_iso;
+  try {
+    slotFormatted = new Date(slot_iso).toLocaleString('en-US', {
+      timeZone: 'America/Chicago', weekday: 'short', month: 'short',
+      day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+    });
+  } catch (e) { /* use raw */ }
+
+  await sendTelegramAlert(env,
+    `📅 <b>Elise — Demo booking request</b>\n📧 ${email}\n🕐 ${slotFormatted}\n🆔 ${prospect_id}${notes ? `\n📝 ${notes}` : ''}\n\n⚠️ <i>Calendar not wired yet — confirm manually.</i>`
+  );
+
+  return json({ results: [{ toolCallId,
+    result: `Booking request saved for ${slotFormatted} — ${email}. Costa will send a calendar invite within the hour.`
+  }]});
+}
+
+async function vapiSaveDisposition(args, toolCallId, callId, env) {
+  const { prospect_id, outcome, notes, callback_at } = args;
+
+  if (env.SPAM_LOG) {
+    try {
+      await env.SPAM_LOG.put(`vapi_call:${callId || Date.now()}:${prospect_id}`, JSON.stringify({
+        prospect_id, outcome, notes, callback_at,
+        call_id: callId, saved_at: new Date().toISOString()
+      }), { expirationTtl: 7776000 });
+    } catch (e) { /* non-blocking */ }
+  }
+
+  const alertOutcomes = { sold: '💰', demo_booked: '📅', callback: '📞' };
+  if (alertOutcomes[outcome]) {
+    await sendTelegramAlert(env,
+      `${alertOutcomes[outcome]} <b>Elise — ${outcome.replace('_', ' ').toUpperCase()}</b>\n🆔 ${prospect_id}${notes ? `\n📝 ${notes}` : ''}${callback_at ? `\n🔁 Callback: ${callback_at}` : ''}`
+    );
+  }
+
+  return json({ results: [{ toolCallId, result: `Saved: ${outcome}` }] });
+}
+
+async function vapiTransferToOwner(args, toolCallId, env) {
+  const { reason } = args;
+
+  await sendTelegramAlert(env,
+    `📲 <b>Elise — LIVE TRANSFER incoming</b>\nConnecting prospect to Costa now\n📝 ${reason || 'prospect requested human'}`
+  );
+
+  return json({
+    results: [{ toolCallId, result: 'Connecting you with Costa now — please hold for just a moment.' }],
+    destination: { type: 'number', number: COSTA_PHONE, message: 'Please hold for just a moment.' }
+  });
+}
+
+const TIER1_CITIES = new Set(['phoenix','houston','atlanta','dallas','chicago','los angeles','new york','miami','las vegas','denver','seattle','portland','san antonio','austin','san diego','san jose','minneapolis','detroit','baltimore','washington']);
+const TIER3_CITIES = new Set(['spokane','rapid city','billings','cedar rapids','topeka','lawton','lake charles','edmond','bloomington','mcallen','laredo','shreveport','amarillo']);
+
+const PRICING_MATRIX = {
+  'hvac':             { t1:[1800,2400], t2:[1200,1600], t3:[700,1000],  ppl:[75,55,40] },
+  'plumbing':         { t1:[1500,2000], t2:[1000,1400], t3:[600,900],   ppl:[65,45,35] },
+  'pool resurfacing': { t1:[2000,3000], t2:[1300,1800], t3:[800,1200],  ppl:[150,110,80] },
+  'roofing':          { t1:[2200,3500], t2:[1500,2200], t3:[900,1400],  ppl:[120,90,65] },
+  'mobile mechanic':  { t1:[900,1300],  t2:[600,900],   t3:[400,600],   ppl:[35,25,20] },
+  'septic':           { t1:[1200,1800], t2:[800,1200],  t3:[500,800],   ppl:[55,40,30] },
+  'bathroom remodel': { t1:[2500,4000], t2:[1800,2800], t3:[1000,1500], ppl:[200,150,100] },
+  'siding':           { t1:[2000,3200], t2:[1400,2000], t3:[900,1300],  ppl:[175,130,90] },
+  'radon mitigation': { t1:[1400,2000], t2:[900,1400],  t3:[600,900],   ppl:[100,75,55] },
+  'tree service':     { t1:[1200,1800], t2:[800,1200],  t3:[500,800],   ppl:[50,35,25] },
+};
+
+async function vapiRequestQuote(args, toolCallId, env) {
+  const { niche, city } = args;
+  const nicheKey = (niche || '').toLowerCase().trim();
+  const cityKey  = (city  || '').toLowerCase().trim();
+  const p = PRICING_MATRIX[nicheKey];
+
+  if (!p) {
+    return json({ results: [{ toolCallId,
+      result: `Real number depends on your market — let me set the demo so Costa can run the actual quote for your area.`
+    }]});
+  }
+
+  const tierIdx = TIER1_CITIES.has(cityKey) ? 0 : TIER3_CITIES.has(cityKey) ? 2 : 1;
+  const band = [p.t1, p.t2, p.t3][tierIdx];
+  const flat = Math.round((band[0] + band[1]) / 2 / 50) * 50;
+  const ppl  = p.ppl[tierIdx];
+
+  return json({ results: [{ toolCallId,
+    result: `$${flat.toLocaleString()}/month flat — all leads exclusive, month-to-month, 30-day cancel, no setup fee. Or pay-per-lead at $${ppl}/qualified lead if you'd rather not commit monthly.`
+  }]});
+}
+
+async function vapiSendDemoLink(args, toolCallId, env) {
+  const { email, prospect_id } = args;
+
+  if (!env.BREVO_API_KEY) {
+    return json({ results: [{ toolCallId, result: "I'll have Costa send the demo link over shortly." }] });
+  }
+
+  const demoUrl = 'https://demo.irontigerdigital.com';
+  const htmlContent = `<div style="font-family:Arial,sans-serif;color:#333;max-width:600px">
+    <h2 style="color:#c45c26">Iron Tiger Digital — Demo Site</h2>
+    <p>As promised, here's a look at what you'd be getting:</p>
+    <p style="margin:24px 0"><a href="${demoUrl}" style="background:#c45c26;color:#fff;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:bold">View Demo Site →</a></p>
+    <p>Your site would be built and ranked for your specific niche and city. To see live lead data and walk through the numbers, grab a 15-minute slot with Costa.</p>
+    <p style="color:#888;font-size:13px">— Elise · Iron Tiger Digital</p>
+  </div>`;
+
+  try {
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sender: { name: 'Iron Tiger Digital', email: 'irontigerdigital@gmail.com' },
+        to: [{ email }],
+        subject: 'Your Iron Tiger Digital demo site',
+        htmlContent
+      })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return json({ results: [{ toolCallId, result: `Demo link sent to ${email}.` }] });
+  } catch (e) {
+    console.error('vapiSendDemoLink Brevo error:', e.message);
+    return json({ results: [{ toolCallId, result: "Email failed — I've noted it and Costa will follow up directly." }] });
+  }
 }
