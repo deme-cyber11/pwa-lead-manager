@@ -296,6 +296,11 @@ export default {
       return await handleVapiTool(request, env, path);
     }
 
+    // ── Calendly Webhook ──
+    if (path === '/webhook/calendly' && request.method === 'POST') {
+      return await handleCalendlyWebhook(request, env);
+    }
+
     // ── CRM Lead Dashboard endpoints ──
     // Auth: ?pin= query param OR Authorization: Bearer <pin> OR X-Auth-Token header
     const pinParam = url.searchParams.get('pin');
@@ -1399,32 +1404,78 @@ async function handleVapiTool(request, env, path) {
   }
 }
 
+const CALENDLY_EVENT_TYPE_URI = 'https://api.calendly.com/event_types/3c50ea0f-b4fe-407c-9356-a1f10b8a3144';
+const CALENDLY_FALLBACK_URL = 'https://calendly.com/irontigerdigital/30min';
+
+async function getCalendlyBookingUrl(env) {
+  if (!env.CALENDLY_PAT) return CALENDLY_FALLBACK_URL;
+  try {
+    const resp = await fetch('https://api.calendly.com/scheduling_links', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.CALENDLY_PAT}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        max_event_count: 1,
+        owner: CALENDLY_EVENT_TYPE_URI,
+        owner_type: 'EventType',
+      }),
+    });
+    if (!resp.ok) {
+      console.error('Calendly scheduling_links error:', resp.status, await resp.text());
+      return CALENDLY_FALLBACK_URL;
+    }
+    const data = await resp.json();
+    return data?.resource?.booking_url || CALENDLY_FALLBACK_URL;
+  } catch (e) {
+    console.error('Calendly scheduling_links fetch error:', e.message);
+    return CALENDLY_FALLBACK_URL;
+  }
+}
+
 async function vapiBookDemo(args, toolCallId, callId, env) {
-  const { prospect_id, slot_iso, email, notes } = args;
+  const { prospect_id, slot_iso, email, notes, phone } = args;
+
+  const bookingUrl = await getCalendlyBookingUrl(env);
+  const isUnique = bookingUrl !== CALENDLY_FALLBACK_URL;
 
   if (env.SPAM_LOG) {
     try {
       await env.SPAM_LOG.put(`demo_booking:${Date.now()}:${prospect_id}`, JSON.stringify({
-        prospect_id, slot_iso, email, notes, call_id: callId,
-        booked_at: new Date().toISOString(), status: 'pending_calendar'
+        prospect_id, slot_iso, email, phone, notes, call_id: callId,
+        booking_url: bookingUrl, unique_link: isUnique,
+        booked_at: new Date().toISOString(), status: 'calendly_link_sent'
       }), { expirationTtl: 7776000 });
     } catch (e) { /* non-blocking */ }
   }
 
-  let slotFormatted = slot_iso;
-  try {
-    slotFormatted = new Date(slot_iso).toLocaleString('en-US', {
-      timeZone: 'America/Chicago', weekday: 'short', month: 'short',
-      day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
-    });
-  } catch (e) { /* use raw */ }
+  if (email && env.BREVO_API_KEY) {
+    try {
+      await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sender: { name: 'Iron Tiger Digital', email: 'irontigerdigital@gmail.com' },
+          to: [{ email }],
+          subject: 'Pick a 15-min slot with Costa',
+          htmlContent: `<div style="font-family:Arial,sans-serif;color:#333;max-width:600px">
+            <h2 style="color:#c45c26">Let's lock in your demo</h2>
+            <p>As promised, here's the link to pick a 15-minute slot with Costa to walk through the site, the lead numbers, and pricing for your area:</p>
+            <p style="margin:24px 0"><a href="${bookingUrl}" style="background:#c45c26;color:#fff;padding:12px 28px;text-decoration:none;border-radius:4px;font-weight:bold">Pick a Time →</a></p>
+            <p style="color:#888;font-size:13px">— Iron Tiger Digital</p>
+          </div>`
+        })
+      });
+    } catch (e) { console.error('book_demo Brevo error:', e.message); }
+  }
 
   await sendTelegramAlert(env,
-    `📅 <b>Elise — Demo booking request</b>\n📧 ${email}\n🕐 ${slotFormatted}\n🆔 ${prospect_id}${notes ? `\n📝 ${notes}` : ''}\n\n⚠️ <i>Calendar not wired yet — confirm manually.</i>`
+    `📅 <b>Elise — Demo link sent</b>\n📧 ${email}\n🆔 ${prospect_id}${notes ? `\n📝 ${notes}` : ''}\n🔗 ${bookingUrl}${isUnique ? ' (unique)' : ' (fallback)'}`
   );
 
   return json({ results: [{ toolCallId,
-    result: `Booking request saved for ${slotFormatted} — ${email}. Costa will send a calendar invite within the hour.`
+    result: `I just sent the Calendly link to ${email}. Pick whatever time works — Costa will get the invite the moment you book it.`
   }]});
 }
 
@@ -1534,4 +1585,47 @@ async function vapiSendDemoLink(args, toolCallId, env) {
     console.error('vapiSendDemoLink Brevo error:', e.message);
     return json({ results: [{ toolCallId, result: "Email failed — I've noted it and Costa will follow up directly." }] });
   }
+}
+
+// ── Calendly Webhook Handler ──
+async function handleCalendlyWebhook(request, env) {
+  let body;
+  try { body = await request.json(); } catch (e) {
+    return new Response('Bad Request', { status: 400 });
+  }
+
+  const event = body?.event;
+  const payload = body?.payload;
+
+  if (!event || !payload) return new Response('OK', { status: 200 });
+
+  const inviteeName = payload?.name || 'Unknown';
+  const inviteeEmail = payload?.email || '';
+  const eventStart = payload?.scheduled_event?.start_time || '';
+  const eventUri = payload?.scheduled_event?.uri || '';
+  const cancelReason = payload?.cancellation?.reason || '';
+
+  if (env.SPAM_LOG) {
+    try {
+      await env.SPAM_LOG.put(`calendly_event:${Date.now()}`, JSON.stringify({
+        event, inviteeName, inviteeEmail, eventStart, eventUri, cancelReason,
+        raw: body, received_at: new Date().toISOString()
+      }), { expirationTtl: 7776000 });
+    } catch (e) { /* non-blocking */ }
+  }
+
+  if (event === 'invitee.created') {
+    const startFormatted = eventStart
+      ? new Date(eventStart).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })
+      : '—';
+    await sendTelegramAlert(env,
+      `🗓 <b>Demo booked!</b>\n👤 ${inviteeName}\n📧 ${inviteeEmail}\n🕐 ${startFormatted}`
+    );
+  } else if (event === 'invitee.canceled') {
+    await sendTelegramAlert(env,
+      `❌ <b>Demo canceled</b>\n👤 ${inviteeName}\n📧 ${inviteeEmail}${cancelReason ? `\n📝 ${cancelReason}` : ''}`
+    );
+  }
+
+  return new Response('OK', { status: 200 });
 }
