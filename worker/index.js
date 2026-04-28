@@ -4,6 +4,120 @@
 
 const COSTA_PHONE = '+17344761457';
 
+// ── Auto lead-shopping — low-tier sites ───────��───────────────────────────────
+// When a form lead comes in from a low-tier site, instantly email all contractors.
+// Contractors sourced from Google Maps (2026-04-28). Update as needed.
+const LOW_TIER_SITES = new Set([
+  'peakshinedetailing.com',
+  'knoxpressurepros.com',
+  'inlandnwhottubs.com',
+  'tallymobilemechanic.com',
+  'bayoutecheseptic.com',
+]);
+
+// VERIFIED-ONLY policy (Costa 2026-04-28 18:44): only real-domain emails
+// (info@realdomain.com, firstname@realdomain.com) confirmed via website.
+// Seeded gmail/yahoo guesses removed — keep this list in sync with
+// tools/auto-lead-shopper.py CONTRACTORS dict.
+const SITE_CONTRACTORS = {
+  'peakshinedetailing.com': {
+    city: 'Kingsport', serviceLabel: 'detailing',
+    pitchOpener: 'Costa here — I own peakshinedetailing.com and get detailing requests in the Kingsport/Tri-Cities area.',
+    recipients: [
+      { greeting: "Precision team", to: "info@precisionautodetailkpt.com",     company: "Precision Auto Detail" },
+    ],
+  },
+  'knoxpressurepros.com': {
+    city: 'Knoxville', serviceLabel: 'pressure washing',
+    pitchOpener: 'Costa here — I own knoxpressurepros.com and get pressure washing requests in Knoxville.',
+    recipients: [
+      { greeting: "David",          to: "info@knoxpressurewashing.com",        company: "Knox Pressure Washing" },
+      { greeting: "Chad",           to: "chad@cleanprostennessee.com",         company: "Clean Pros Tennessee" },
+    ],
+  },
+  'inlandnwhottubs.com': {
+    city: 'Spokane', serviceLabel: 'hot tub service',
+    pitchOpener: 'Costa here — I own inlandnwhottubs.com and get hot tub service requests in the Spokane area.',
+    recipients: [
+      { greeting: "Mike",           to: "info@spokanepooltubs.com",            company: "Spokane Pool & Tubs" },
+    ],
+  },
+  'tallymobilemechanic.com': {
+    city: 'Tallahassee', serviceLabel: 'mobile mechanic',
+    pitchOpener: 'Costa here — I own tallymobilemechanic.com and get mobile mechanic requests in Tallahassee.',
+    recipients: [
+      { greeting: "Marcus",           to: "info@tallymobilemech.com",            company: "Tally Mobile Mech" },
+    ],
+  },
+  'bayoutecheseptic.com': {
+    city: 'Lafayette', serviceLabel: 'septic service',
+    pitchOpener: 'Costa here — I own bayoutecheseptic.com and get septic service requests in the Lafayette area.',
+    recipients: [
+      { greeting: "A-1 team",      to: "info@a1septicsvc.com",                company: "A-1 Septic Service" },
+    ],
+  },
+  'redsticksidingandroof.com': {
+    city: 'Baton Rouge', serviceLabel: 'siding/roofing',
+    pitchOpener: 'Costa here — I own redsticksidingandroof.com and get siding and roofing requests in Baton Rouge.',
+    recipients: [
+      { greeting: "Steven",          to: "steven@empireroofllc.com",            company: "Empire Roofing & Exteriors" },
+      { greeting: "Harry",           to: "brothersconstructionbr@gmail.com",    company: "Brothers Construction" },
+      { greeting: "Tommy",           to: "geauxtommys@gmail.com",               company: "Tommy's Siding" },
+      { greeting: "Eric",            to: "sunrise_roofing@yahoo.com",           company: "Sunrise Roofing" },
+      { greeting: "David",           to: "info@rysonroofing.com",               company: "Ryson Roofing" },
+      { greeting: "Tommy",           to: "geauxroofla@gmail.com",               company: "Geaux Roof LA" },
+      { greeting: "Fred",            to: "info@garciadidmyroof.com",            company: "Garcia Roofing" },
+      { greeting: "Roof Gecko team", to: "office@callroofgecko.com",            company: "Roof Gecko" },
+      { greeting: "Hugo",            to: "domingo@vandvroofing.com",            company: "V&V Roofing" },
+      { greeting: "Caprice",         to: "caprice@cypressroofingla.com",        company: "Cypress Roofing" },
+    ],
+  },
+};
+
+async function shopLeadToContractors(env, { site, name, phone, address, service, message }) {
+  const cfg = SITE_CONTRACTORS[site];
+  if (!cfg || !env.BREVO_API_KEY) return;
+
+  const addrShort = address ? address.split(',')[0].trim() : 'unknown area';
+  const subject = `New ${cfg.serviceLabel} lead in ${cfg.city} — ${addrShort}`;
+  const phoneSlug = (phone || '').replace(/\D/g, '').slice(-6);
+  const packetUrl = phoneSlug
+    ? `https://${site}/leads/${phoneSlug}/`
+    : `https://${site}/leads/`;
+
+  const sends = cfg.recipients.map(r => {
+    const body =
+      `Hey ${r.greeting},\n\n` +
+      `${cfg.pitchOpener}\n\n` +
+      `Got a fresh inbound lead today:\n\n` +
+      `  Name:    ${name || 'Not provided'}\n` +
+      `  Address: ${address || 'Not provided'}\n` +
+      `  Service: ${service || cfg.serviceLabel}\n` +
+      (message ? `  Note:    ${message.slice(0, 200)}\n` : '') +
+      `\nLead packet: ${packetUrl}\n\n` +
+      `First to reply gets the contact info passed directly to you.\n\n` +
+      `If the lead closes well and quality holds, happy to keep the door open for more.\n\n` +
+      `— Costa\ncosta@irontigerleads.com\n(225) 535-4918\n` +
+      `Iron Tiger Leads | ${site}`;
+
+    return fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sender: { name: 'Costa', email: 'costa@irontigerleads.com' },
+        replyTo: { email: 'costa@irontigerleads.com' },
+        to: [{ email: r.to, name: r.company }],
+        subject,
+        textContent: body,
+      }),
+    }).catch(e => console.error(`shop-lead send failed to ${r.to}:`, e.message));
+  });
+
+  await Promise.allSettled(sends);
+  console.log(`[auto-shop] Shopped ${site} lead to ${cfg.recipients.length} contractors`);
+}
+// ── End auto lead-shopping ──────────���─────────────────────────────────────────
+
 // Per-site forwarding overrides — tenant numbers or alternate destinations
 // Key: Twilio inbound number | Value: forward-to number
 // If a number isn't listed here, calls forward to COSTA_PHONE (default)
@@ -1092,6 +1206,13 @@ async function handleLeadIngest(request, env) {
       } catch (e) {
         console.error('KV lead store failed:', e.message);
       }
+    }
+
+    // ── Auto-shop form leads from low-tier sites ──
+    if (LOW_TIER_SITES.has(source) && phone) {
+      shopLeadToContractors(env, { site: source, name, phone, address, service, message }).catch(e =>
+        console.error('[auto-shop] failed:', e.message)
+      );
     }
 
     const redirect = fields._next || fields._redirect;
