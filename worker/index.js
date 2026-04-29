@@ -1506,13 +1506,13 @@ function extractNameFromTranscript(transcript) {
 const BAYOU_TECHE_FROM = '+13374920960';  // Bayou Teche Septic Twilio number
 const BAYOU_TECHE_FORM = 'https://bayoutecheseptic.com/estimate/';
 
-// Map agent_id → site config for multi-site expansion later
+// Map agent_id → site config (Twilio number used as SMS sender + estimate form URL)
 const RETELL_SITE_MAP = {
-  'agent_c89f789b30dde8b7e1edcd9ec9': {
-    label: 'Lafayette Septic Service',
-    from: BAYOU_TECHE_FROM,
-    form_url: BAYOU_TECHE_FORM,
-  },
+  'agent_c89f789b30dde8b7e1edcd9ec9': { label: 'Lafayette Septic Service', from: '+13374920960', form_url: 'https://bayoutecheseptic.com/estimate/' },
+  'agent_90bf3f1172eda6a8620b41d99d': { label: 'Peak Shine Detailing',     from: '+14235891682', form_url: 'https://peakshinedetailing.com/estimate/' },
+  'agent_4d788033bcfe3eb5efc900ba98': { label: 'Knox Pressure Pros',       from: '+18653788377', form_url: 'https://knoxpressurepros.com/estimate/' },
+  'agent_34b1d6e96da170cd9ae51473bc': { label: 'Inland NW Hot Tubs',       from: '+15092367423', form_url: 'https://inlandnwhottubs.com/estimate/' },
+  'agent_d17e4bc682748e8377bc9cb7d0': { label: 'Tally Mobile Mechanic',    from: '+18507263411', form_url: 'https://tallymobilemechanic.com/estimate/' },
 };
 
 async function handleRetellTool(request, env, path) {
