@@ -422,6 +422,11 @@ export default {
       return await handleCalendlyWebhook(request, env);
     }
 
+    // ── Public lead packet page (no auth — URL is the access control) ──
+    if (path.startsWith('/packet/') && request.method === 'GET') {
+      return await serveLeadPacket(path.replace('/packet/', '').replace(/\/$/, ''), env);
+    }
+
     // ── CRM Lead Dashboard endpoints ──
     // Auth: ?pin= query param OR Authorization: Bearer <pin> OR X-Auth-Token header
     const pinParam = url.searchParams.get('pin');
@@ -1457,6 +1462,65 @@ async function updateLeadStatus(request, leadId, env) {
   } catch (e) {
     return json({ error: e.message }, 500);
   }
+}
+
+async function serveLeadPacket(phoneSlug, env) {
+  try {
+    const idxRaw = env.SPAM_LOG ? await env.SPAM_LOG.get('leads:index') : null;
+    const idx = idxRaw ? JSON.parse(idxRaw) : [];
+    // phone slug = first 6 digits of the 10-digit cleaned phone
+    const cleanSlug = phoneSlug.replace(/\D/g, '');
+    let lead = null;
+    for (const key of idx) {
+      const parts = key.split(':'); // lead:{ts}:{phoneHash}
+      const phoneHash = parts[2] || '';
+      if (phoneHash.startsWith(cleanSlug)) {
+        const raw = await env.SPAM_LOG.get(key);
+        if (raw) { lead = JSON.parse(raw); break; }
+      }
+    }
+    if (!lead) {
+      return new Response(
+        `<html><body style="font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px">` +
+        `<h2>Lead Not Found</h2><p>This lead may have expired or the link is invalid. ` +
+        `Reply directly to <a href="mailto:costa@irontigerleads.com">costa@irontigerleads.com</a> for details.</p></body></html>`,
+        { status: 404, headers: { 'Content-Type': 'text/html' } }
+      );
+    }
+    const ts = new Date(lead.timestamp).toLocaleString('en-US', { timeZone: 'America/Chicago', dateStyle: 'medium', timeStyle: 'short' });
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lead Packet — Iron Tiger Leads</title>
+<style>body{font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px;color:#222}
+h2{color:#c0392b}table{width:100%;border-collapse:collapse;margin:16px 0}
+td{padding:8px 12px;border-bottom:1px solid #eee;vertical-align:top}
+td:first-child{font-weight:bold;width:30%;color:#555}
+.cta{background:#c0392b;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;margin-top:16px}
+footer{margin-top:32px;font-size:12px;color:#999}</style></head>
+<body>
+<h2>Lead Packet</h2>
+<p>This lead was referred by <strong>Iron Tiger Leads</strong>. Reply to claim it.</p>
+<table>
+<tr><td>Name</td><td>${escHtml(lead.name || '—')}</td></tr>
+<tr><td>Phone</td><td>${escHtml(lead.phone || '—')}</td></tr>
+<tr><td>Address</td><td>${escHtml(lead.address || '—')}</td></tr>
+<tr><td>Service</td><td>${escHtml(lead.service || '—')}</td></tr>
+<tr><td>Details</td><td>${escHtml(lead.summary || '—')}</td></tr>
+<tr><td>Received</td><td>${ts} CT</td></tr>
+<tr><td>Site</td><td>${escHtml(lead.site || '—')}</td></tr>
+</table>
+<a class="cta" href="mailto:costa@irontigerleads.com?subject=Claiming lead — ${encodeURIComponent(lead.name || phoneSlug)}">Reply to Claim This Lead</a>
+<footer>Iron Tiger Leads · costa@irontigerleads.com · (225) 535-4918<br>
+Contact info released upon reply. First to respond gets it.</footer>
+</body></html>`;
+    return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+  } catch (e) {
+    return new Response('Error loading lead packet: ' + e.message, { status: 500, headers: { 'Content-Type': 'text/plain' } });
+  }
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function deduplicateLeads(leads) {
