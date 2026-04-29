@@ -404,6 +404,13 @@ export default {
       }
     }
 
+    // ── Retell Voice Agent Tools — Sarah inbound lead capture ──
+    // Tools: save_lead, send_sms_form, transfer_to_owner, report_spam
+    // Auth: WEBHOOK_SECRET checked in body or x-api-key header.
+    if (path.startsWith('/retell/') && request.method === 'POST') {
+      return await handleRetellTool(request, env, path);
+    }
+
     // ── Vapi Voice Tool Endpoints — Elise outbound seller ──
     // Each Elise tool posts to its own URL. Auth via x-vapi-secret header (VAPI_SECRET env).
     if (path.startsWith('/voice/') && request.method === 'POST') {
@@ -1492,6 +1499,121 @@ function extractNameFromTranscript(transcript) {
   // Try to find a name from common patterns like "I'm John" or "My name is Jane"
   const match = transcript.match(/(?:my name is|i'm|i am)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)/i);
   return match ? match[1] : null;
+}
+
+// ── Retell Tool Handler — Sarah inbound lead capture ─────────────────────────
+
+const BAYOU_TECHE_FROM = '+13374920960';  // Bayou Teche Septic Twilio number
+const BAYOU_TECHE_FORM = 'https://bayoutecheseptic.com/estimate/';
+
+// Map agent_id → site config for multi-site expansion later
+const RETELL_SITE_MAP = {
+  'agent_c89f789b30dde8b7e1edcd9ec9': {
+    label: 'Lafayette Septic Service',
+    from: BAYOU_TECHE_FROM,
+    form_url: BAYOU_TECHE_FORM,
+  },
+};
+
+async function handleRetellTool(request, env, path) {
+  let body;
+  try { body = await request.json(); } catch (e) {
+    return json({ result: 'Error: invalid JSON body' });
+  }
+
+  // Auth: accept secret in body OR x-api-key header
+  const authHeader = request.headers.get('x-api-key') || '';
+  const bodySecret = body.secret || '';
+  if (env.WEBHOOK_SECRET && authHeader !== env.WEBHOOK_SECRET && bodySecret !== env.WEBHOOK_SECRET) {
+    return json({ result: 'Error: unauthorized' }, 401);
+  }
+
+  const tool = path.replace('/retell/', '');
+  const callId = body.call_id || '';
+  const agentId = body.agent_id || '';
+  const site = RETELL_SITE_MAP[agentId] || { label: 'Iron Tiger Digital', from: BAYOU_TECHE_FROM, form_url: BAYOU_TECHE_FORM };
+  // Retell sends a flat merged body (payload_schema + parameters), not a nested args object.
+  // Strip out meta fields so args contains only semantic tool parameters.
+  const { call_id: _cid, agent_id: _aid, to_number: _ton, _source, site_domain: _sd, secret: _sec, ...args } = body;
+
+  switch (tool) {
+    case 'save_lead':   return await retellSaveLead(args, callId, site, env);
+    case 'send_sms_form': return await retellSendSmsForm(args, site, env);
+    case 'transfer_to_owner': return retellTransfer(args, env);
+    case 'report_spam': return await retellReportSpam(args, callId, env);
+    default: return json({ result: `Error: unknown tool "${tool}"` });
+  }
+}
+
+async function retellSaveLead(args, callId, site, env) {
+  const { customer_name, last_name, phone, address, service_requested, urgency, sms_ok, problem_description } = args;
+  const fullName = [customer_name, last_name].filter(Boolean).join(' ') || 'Unknown';
+  const phoneClean = (phone || '').trim();
+  const ts = new Date().toISOString();
+
+  const lead = { fullName, phone: phoneClean, address, service_requested, urgency, sms_ok, problem_description, call_id: callId, site: site.label, saved_at: ts };
+
+  if (env.SPAM_LOG) {
+    const key = `lead:${Date.now()}:${phoneClean.replace(/\D/g, '')}`;
+    await env.SPAM_LOG.put(key, JSON.stringify(lead), { expirationTtl: 7776000 }); // 90 days
+  }
+
+  const urgencyFlag = urgency === 'emergency' ? '🚨 EMERGENCY — ' : urgency === 'same-day' ? '⚡ SAME-DAY — ' : '';
+  const alertMsg = `${urgencyFlag}🔥 NEW LEAD — ${site.label}\n👤 ${fullName}\n📞 ${phoneClean}\n📍 ${address || 'not given'}\n🔧 ${service_requested || 'unknown'}\n🕐 ${urgency || 'unknown'}${problem_description ? '\n📝 ' + problem_description : ''}`;
+  await sendTelegramAlert(env, alertMsg);
+
+  if (sms_ok !== false && phoneClean) {
+    try {
+      await twilioPost(env, 'Messages.json', {
+        From: site.from,
+        To: phoneClean,
+        Body: `Hi ${customer_name || 'there'} — I mentioned I'd send over our quick estimate form. Fill this out and upload any photos, and our team will follow up to get a time locked in: ${site.form_url}`,
+      });
+    } catch (e) {
+      console.error('retellSaveLead SMS error:', e.message);
+    }
+  }
+
+  return json({ result: `Got it — lead saved for ${fullName}.${sms_ok !== false && phoneClean ? ' Estimate form text is on its way.' : ''}` });
+}
+
+async function retellSendSmsForm(args, site, env) {
+  const { phone, customer_name } = args;
+  const phoneClean = (phone || '').trim();
+  if (!phoneClean) return json({ result: 'Error: phone number required' });
+
+  try {
+    await twilioPost(env, 'Messages.json', {
+      From: site.from,
+      To: phoneClean,
+      Body: `Hi ${customer_name || 'there'} — here's our quick estimate form. Fill it out and add any photos, and our team will call to get you scheduled: ${site.form_url}`,
+    });
+    return json({ result: `Estimate form sent to ${phoneClean}.` });
+  } catch (e) {
+    console.error('retellSendSmsForm error:', e.message);
+    return json({ result: `SMS failed — team will call directly instead.` });
+  }
+}
+
+function retellTransfer(args, env) {
+  const { reason } = args;
+  return json({
+    result: 'Connecting you with the team now — please hold just a moment.',
+    action: { type: 'transfer_call', number: COSTA_PHONE },
+  });
+}
+
+async function retellReportSpam(args, callId, env) {
+  const rawNumber = args.caller_number || args.phone || '';
+  const number = String(rawNumber).startsWith('+') ? rawNumber : `+1${String(rawNumber).replace(/\D/g, '')}`;
+  const reason = args.reason || 'flagged-by-sarah';
+  if (env.SPAM_LOG && number.length >= 10) {
+    await env.SPAM_LOG.put(`dyn_block:${number}`, JSON.stringify({
+      reason: `retell:${reason}`, blocked_at: new Date().toISOString(),
+      source_call_id: callId, flagged_by: 'retell-sarah'
+    }), { expirationTtl: 5184000 });
+  }
+  return json({ result: 'Number logged. Ending call now.' });
 }
 
 // ── Vapi Tool Handler ──────────────────────────────────────────────────────────
