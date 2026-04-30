@@ -552,7 +552,8 @@ const SPAM_EMAILS = new Set([
 const SPAM_EMAIL_PATTERNS = [
   /^no\.reply\./i,
 ];
-// Spam email domains — any email @these domains is silently dropped
+// Spam email domains — any email @these domains is silently dropped.
+// Disposable / throwaway / random-fuzzer domains. Add new ones as bots rotate.
 const SPAM_DOMAINS = new Set([
   'bangeshop.com',
   'gmx.com',
@@ -563,6 +564,30 @@ const SPAM_DOMAINS = new Set([
   'throwam.com',
   'sharklasers.com',
   'guerrillamailblock.com',
+  // 2026-04-29 random-fuzzer bot hit elkhornhardwood.com via .info burner domains
+  'immenseignite.info',
+  'tempmail.com',
+  'temp-mail.org',
+  'tempmailo.com',
+  'fakeinbox.com',
+  'trashmail.com',
+  '10minutemail.com',
+  '10minutemail.net',
+  'maildrop.cc',
+  'getnada.com',
+  'nada.email',
+  'dispostable.com',
+  'mailnesia.com',
+  'spambox.us',
+  'spam4.me',
+  'mohmal.com',
+  'tempinbox.com',
+  'mytemp.email',
+  'emailondeck.com',
+  'inboxbear.com',
+  'fakemailgenerator.com',
+  'tempr.email',
+  'mintemail.com',
 ]);
 const SPAM_KEYWORDS = [
   'web visitors into leads',
@@ -575,6 +600,31 @@ const SPAM_KEYWORDS = [
   'platform allows sending outreach',
   'sending outreach messages',
 ];
+
+// ── Gibberish detector for random-string fuzzer bots ──────────────────────
+// Catches bots that fill every field with random alphabet strings like
+// "xzlsqmtnzi" / "uydpskrg" / "igholsqqloktdluywkjgnsxvleydlg".
+// Pairs with ≥2-unique-gibberish-strings rule in handleLeadIngest so that
+// occasional false positives (e.g. consonant-heavy Polish names like
+// "Krzysztof") don't block real leads — only when DIFFERENT fields all look
+// random does the lead drop.
+function looksLikeGibberish(s) {
+  if (!s || typeof s !== 'string') return false;
+  const txt = s.toLowerCase().trim();
+  if (txt.length < 6) return false;
+  if (/[\s.,!?@\-]/.test(txt)) return false;       // sentences / emails / hyphenated
+  if (!/^[a-z]+$/.test(txt)) return false;         // all letters only
+  // Strong signal: any consonant run of 5+ covering ≥50% of the string.
+  // English almost never has 5 consecutive consonants outside loanwords.
+  const longRuns = (txt.match(/[bcdfghjklmnpqrstvwxyz]{5,}/g) || []);
+  const longRunChars = longRuns.reduce((n, r) => n + r.length, 0);
+  if (longRunChars / txt.length >= 0.50) return true;
+  // Backup signal: ≥10-char string with no common English digraphs.
+  const COMMON = ['th','sh','ch','ing','tion','er','on','an','en','in','es','ed','or','st','le','ar','ent','all','ome','ack','re','at','it','ou','as','is','ti','to','of','nd','ng','ll','ee','oo'];
+  const hits = COMMON.filter(p => txt.includes(p)).length;
+  if (txt.length >= 12 && hits === 0) return true;
+  return false;
+}
 
 // ── Voice Call Handler — spam check + direct forward (no press-1 gate) ──
 
@@ -1101,6 +1151,19 @@ async function handleLeadIngest(request, env) {
     const refererDomain = (fields.site_domain || (request.headers.get('Referer') || '').replace(/https?:\/\//, '').split('/')[0] || '').toLowerCase();
     const urlInMessage = refererDomain && rawMsg.includes(refererDomain);
 
+    // Random-string fuzzer detection — drop if ≥2 DIFFERENT fields are
+    // gibberish. Dedup by string so a Polish name appearing in both
+    // first_name and email-prefix counts once, not twice.
+    // 2026-04-29 elkhornhardwood lead had 4 different gibberish strings.
+    const emailPrefix = rawEmail.split('@')[0] || '';
+    const rawFirst = (fields.first_name || fields.firstName || '').toLowerCase().trim();
+    const rawLast  = (fields.last_name  || fields.lastName  || '').toLowerCase().trim();
+    const gibSet = new Set();
+    for (const c of [emailPrefix, rawMsg, rawFirst, rawLast]) {
+      if (looksLikeGibberish(c)) gibSet.add(c);
+    }
+    const isFuzzerBot = gibSet.size >= 2;
+
     if (
       SPAM_EMAILS.has(rawEmail) ||
       SPAM_DOMAINS.has(emailDomain) ||
@@ -1108,7 +1171,8 @@ async function handleLeadIngest(request, env) {
       SPAM_KEYWORDS.some(kw => rawMsg.includes(kw)) ||
       invalidPhone ||
       invalidCountryCode ||
-      urlInMessage
+      urlInMessage ||
+      isFuzzerBot
     ) {
       return json({ success: true }); // silent drop
     }

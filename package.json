@@ -1,0 +1,10 @@
+{
+  "name": "pwa-lead-manager",
+  "private": true,
+  "description": "Two Cloudflare Workers in this directory — use the explicit scripts below, never bare 'wrangler deploy'.",
+  "scripts": {
+    "deploy:api": "cd worker && wrangler deploy --config wrangler.toml",
+    "deploy:pwa": "wrangler deploy --config wrangler.jsonc",
+    "deploy": "echo 'Use deploy:api (Twilio + leads API) OR deploy:pwa (static lead-manager PWA). Bare deploy is disabled.' && exit 1"
+  }
+}

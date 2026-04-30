@@ -1,3 +1,9 @@
+# ────────────────────────────────────────────────────────────────────
+# THIS WORKER (`lead-manager-api`) is the live Twilio + leads API.
+# It serves Twilio voice/SMS webhooks at lead-manager-api.irontigerdigital.workers.dev.
+# The static PWA lives one level up in ../wrangler.jsonc as `pwa-lead-manager`.
+# Always deploy via `npm run deploy:api` from the parent dir — never bare `wrangler deploy`.
+# ────────────────────────────────────────────────────────────────────
 name = "lead-manager-api"
 main = "index.js"
 compatibility_date = "2024-01-01"

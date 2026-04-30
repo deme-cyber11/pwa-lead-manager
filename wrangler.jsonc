@@ -1,3 +1,8 @@
+// ────────────────────────────────────────────────────────────────────
+// THIS WORKER (`pwa-lead-manager`) only hosts the static PWA from docs/.
+// The Twilio + leads API lives in worker/wrangler.toml as `lead-manager-api`.
+// Always deploy via `npm run deploy:pwa` or `npm run deploy:api` — never bare `wrangler deploy`.
+// ────────────────────────────────────────────────────────────────────
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "pwa-lead-manager",
