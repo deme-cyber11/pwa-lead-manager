@@ -439,6 +439,17 @@ export default {
       return await getUnifiedLeads(url, env);
     }
 
+    if (path === '/api/leads/quality-report' && request.method === 'GET') {
+      if (providedPin !== env.AUTH_PIN) return json({ error: 'Unauthorized' }, 401);
+      return await getLeadQualityReport(url, env);
+    }
+
+    if (path.startsWith('/api/leads/') && path.endsWith('/enrichment') && request.method === 'POST') {
+      if (providedPin !== env.AUTH_PIN) return json({ error: 'Unauthorized' }, 401);
+      const leadId = path.replace('/api/leads/', '').replace('/enrichment', '');
+      return await saveLeadEnrichment(request, leadId, env);
+    }
+
     if (path.startsWith('/api/leads/') && path.endsWith('/status') && request.method === 'POST') {
       if (providedPin !== env.AUTH_PIN) return json({ error: 'Unauthorized' }, 401);
       const leadId = path.replace('/api/leads/', '').replace('/status', '');
@@ -1329,6 +1340,196 @@ function json(data, status = 200) {
   });
 }
 
+// ── Lead Quality Scoring ────────────────────────────────────────────────────
+// 100-point composite. Components are independently zero-able so the final
+// score degrades gracefully when fields or enrichment are missing.
+//
+//    phone_valid              20 pts — 10 digits, not all-same, not 555-prefix
+//    has_real_name            15 pts — name present, not "Unknown"
+//    has_service_area         10 pts — address or city present
+//    call_duration            15 pts — voice-source leads only; ≥30s
+//    not_blocked              15 pts — phone not in static or KV blocklist
+//    line_type_residential    15 pts — enrichment-derived; VOIP penalized
+//    region_match             10 pts — enrichment-derived; phone area matches site
+//
+// Form leads max out at 70 (no call duration). That's intentional —
+// voice leads are higher value because Retell already filtered for intent.
+
+function computeLeadQualityScore(lead, dynBlocked, enrichment) {
+  const components = {};
+  const cleanPhone = (lead.phone || '').replace(/\D/g, '').slice(-10);
+
+  // 1. phone_valid (20)
+  let phoneValid = false;
+  if (cleanPhone.length === 10
+    && !/^(\d)\1{9}$/.test(cleanPhone)
+    && !cleanPhone.startsWith('555')) {
+    phoneValid = true;
+  }
+  components.phone_valid = phoneValid ? 20 : 0;
+
+  // 2. has_real_name (15)
+  const name = (lead.name || lead.fullName || '').trim();
+  components.has_real_name =
+    (name && name.toLowerCase() !== 'unknown' && name.toLowerCase() !== 'unknown caller') ? 15 : 0;
+
+  // 3. has_service_area (10)
+  const addr = (lead.address || '').trim();
+  components.has_service_area = addr.length > 0 ? 10 : 0;
+
+  // 4. call_duration (15) — voice leads only
+  let durationMs = 0;
+  if (lead.raw && typeof lead.raw === 'object') {
+    durationMs = Number(lead.raw.duration || lead.raw.duration_ms || 0);
+  }
+  if (lead.source === 'voice') {
+    components.call_duration = durationMs >= 30_000 ? 15 : (durationMs >= 10_000 ? 7 : 0);
+  } else {
+    // form leads don't have a duration; don't count this component
+    components.call_duration = 0;
+  }
+
+  // 5. not_blocked (15)
+  const phoneE164 = cleanPhone.length === 10 ? `+1${cleanPhone}` : (lead.phone || '');
+  const inStaticBlock = BLOCKED_CALLERS.has(phoneE164);
+  const inDynamicBlock = dynBlocked && dynBlocked.has(phoneE164);
+  components.not_blocked = (inStaticBlock || inDynamicBlock) ? 0 : 15;
+
+  // 6. line_type_residential (15) — from enrichment
+  if (enrichment && enrichment.line_type) {
+    const lt = String(enrichment.line_type).toLowerCase();
+    if (lt === 'mobile' || lt === 'landline' || lt === 'fixed_line') {
+      components.line_type_residential = 15;
+    } else if (lt === 'voip') {
+      components.line_type_residential = 3;  // VOIP heavily penalized — most spam comes from VOIP
+    } else {
+      components.line_type_residential = 7;
+    }
+  } else {
+    components.line_type_residential = 0;  // unknown — score reflects the missing signal
+  }
+
+  // 7. region_match (10) — from enrichment
+  if (enrichment && typeof enrichment.region_match === 'boolean') {
+    components.region_match = enrichment.region_match ? 10 : 0;
+  } else {
+    components.region_match = 0;
+  }
+
+  const total = Object.values(components).reduce((a, b) => a + b, 0);
+  return { score: total, bucket: bucketize(total), components };
+}
+
+function bucketize(score) {
+  if (score >= 76) return 'high';
+  if (score >= 51) return 'medium';
+  if (score >= 26) return 'low';
+  return 'junk';
+}
+
+async function loadDynamicBlocklist(env) {
+  const blocked = new Set();
+  if (!env.SPAM_LOG) return blocked;
+  try {
+    const list = await env.SPAM_LOG.list({ prefix: 'dyn_block:' });
+    for (const key of list.keys) {
+      blocked.add(key.name.replace('dyn_block:', ''));
+    }
+  } catch (e) {
+    console.error('loadDynamicBlocklist error:', e.message);
+  }
+  return blocked;
+}
+
+async function getLeadQualityReport(url, env) {
+  try {
+    const days = Math.max(1, Math.min(90, parseInt(url.searchParams.get('days') || '30')));
+    const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+
+    // Pull unified lead set (reuses existing logic).
+    const leadsResponse = await getUnifiedLeads(url, env);
+    const payload = await leadsResponse.json();
+    const leads = payload.leads || [];
+
+    const dynBlocked = await loadDynamicBlocklist(env);
+
+    // Enrichment overlay: KV key `lead_enrichment:{leadId}` written by tools/lead-enrichment.py
+    const enrichmentMap = {};
+    if (env.SPAM_LOG && leads.length) {
+      const keys = leads.map(l => `lead_enrichment:${l.id}`);
+      const chunks = [];
+      for (let i = 0; i < keys.length; i += 25) chunks.push(keys.slice(i, i + 25));
+      for (const chunk of chunks) {
+        const vals = await Promise.all(chunk.map(k => env.SPAM_LOG.get(k).catch(() => null)));
+        chunk.forEach((key, i) => {
+          if (vals[i]) {
+            try { enrichmentMap[key.replace('lead_enrichment:', '')] = JSON.parse(vals[i]); }
+            catch (e) {}
+          }
+        });
+      }
+    }
+
+    const buckets = { high: 0, medium: 0, low: 0, junk: 0 };
+    const scored = [];
+    for (const lead of leads) {
+      const tsMs = new Date(lead.timestamp || 0).getTime();
+      if (tsMs < sinceMs) continue;
+      const enrichment = enrichmentMap[lead.id] || null;
+      const { score, bucket, components } = computeLeadQualityScore(lead, dynBlocked, enrichment);
+      buckets[bucket] += 1;
+      scored.push({
+        id: lead.id, score, bucket, components,
+        name: lead.name || lead.fullName, phone: lead.phone,
+        site: lead.site, source: lead.source, timestamp: lead.timestamp,
+        enriched: !!enrichment,
+      });
+    }
+
+    return json({
+      window_days: days,
+      total: scored.length,
+      buckets,
+      bucket_definitions: {
+        junk: '0-25 (likely spam, missing data, or blocked)',
+        low: '26-50 (incomplete record)',
+        medium: '51-75 (legitimate but unverified)',
+        high: '76-100 (verified, voice + enrichment)',
+      },
+      enrichment_coverage: leads.length
+        ? Math.round((Object.keys(enrichmentMap).length / leads.length) * 100) + '%'
+        : '0%',
+      generated_at: new Date().toISOString(),
+      leads: scored,
+    });
+  } catch (e) {
+    return json({ error: e.message }, 500);
+  }
+}
+
+async function saveLeadEnrichment(request, leadId, env) {
+  try {
+    const body = await request.json();
+    const { line_type, carrier, region_match, raw } = body || {};
+    if (!env.SPAM_LOG) return json({ error: 'KV not bound' }, 500);
+    const record = {
+      line_type: line_type || null,
+      carrier: carrier || null,
+      region_match: typeof region_match === 'boolean' ? region_match : null,
+      raw: raw || null,
+      enriched_at: new Date().toISOString(),
+    };
+    await env.SPAM_LOG.put(
+      `lead_enrichment:${leadId}`,
+      JSON.stringify(record),
+      { expirationTtl: 7776000 }, // 90 days, matches lead retention
+    );
+    return json({ ok: true, id: leadId });
+  } catch (e) {
+    return json({ error: e.message }, 500);
+  }
+}
+
 // ── CRM Lead Dashboard ──────────────────────────────────────────────────────
 
 async function getUnifiedLeads(url, env) {
@@ -1680,6 +1881,24 @@ async function retellSaveLead(args, callId, site, env) {
   const ts = new Date().toISOString();
 
   const lead = { fullName, phone: phoneClean, address, service_requested, urgency, sms_ok, problem_description, call_id: callId, site: site.label, saved_at: ts };
+
+  // Inline quality scoring with what we have at save-time. Enrichment is added
+  // later by the offline backfill (tools/lead-enrichment.py). Score gets
+  // recomputed on the /api/leads/quality-report endpoint with whatever
+  // enrichment is available at request time, so this is purely informational.
+  try {
+    const dynBlocked = await loadDynamicBlocklist(env);
+    const scoring = computeLeadQualityScore(
+      { ...lead, name: fullName, source: 'voice', raw: { duration: 0 } },
+      dynBlocked,
+      null,
+    );
+    lead.quality_score = scoring.score;
+    lead.quality_bucket = scoring.bucket;
+    lead.quality_components = scoring.components;
+  } catch (e) {
+    console.error('quality scoring failed at save:', e.message);
+  }
 
   if (env.SPAM_LOG) {
     const key = `lead:${Date.now()}:${phoneClean.replace(/\D/g, '')}`;
