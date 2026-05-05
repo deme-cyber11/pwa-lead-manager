@@ -231,7 +231,7 @@ const CORS_HEADERS = {
 };
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS });
     }
@@ -250,7 +250,7 @@ export default {
     }
 
     if (path === '/webhook/sms' && request.method === 'POST') {
-      return await handleIncomingSMS(request, env);
+      return await handleIncomingSMS(request, env, ctx);
     }
 
     // ── /webhook/voice — unified call handler with spam filtering + forwarding ──
@@ -290,7 +290,7 @@ export default {
 
     // ── Form Lead Intake ──
     if (path === '/ingest' && (request.method === 'POST' || request.method === 'OPTIONS')) {
-      return await handleLeadIngest(request, env);
+      return await handleLeadIngest(request, env, ctx);
     }
 
     // ── Retell Voice Agent: report-spam (public, secret-gated) ──
@@ -408,7 +408,7 @@ export default {
     // Tools: save_lead, send_sms_form, transfer_to_owner, report_spam
     // Auth: WEBHOOK_SECRET checked in body or x-api-key header.
     if (path.startsWith('/retell/') && request.method === 'POST') {
-      return await handleRetellTool(request, env, path);
+      return await handleRetellTool(request, env, path, ctx);
     }
 
     // ── Vapi Voice Tool Endpoints — Elise outbound seller ──
@@ -882,7 +882,7 @@ async function initiateCall(request, env) {
 
 // ── Webhooks ──
 
-async function handleIncomingSMS(request, env) {
+async function handleIncomingSMS(request, env, ctx) {
   const formData = await request.formData();
   const from = formData.get('From');
   const to   = formData.get('To');
@@ -954,6 +954,13 @@ async function handleIncomingSMS(request, env) {
       idx.unshift(smsKey);
       if (idx.length > 500) idx.splice(500);
       await env.SPAM_LOG.put('leads:index', JSON.stringify(idx), { expirationTtl: 7776000 });
+
+      // Fire-and-forget enrichment (no-op when no API key configured).
+      if (ctx && from) {
+        const cleanPh = from.replace(/\D/g, '');
+        const e164 = cleanPh.length === 10 ? `+1${cleanPh}` : cleanPh.length === 11 ? `+${cleanPh}` : null;
+        if (e164) ctx.waitUntil(enrichLeadAtSave(smsKey, e164, env));
+      }
     } catch (e) {
       console.error('KV SMS store failed:', e.message);
     }
@@ -1124,7 +1131,7 @@ async function getPortfolioStats(url, env) {
 
 // ── Helpers ──
 
-async function handleLeadIngest(request, env) {
+async function handleLeadIngest(request, env, ctx) {
   if (request.method === 'OPTIONS') {
     return new Response(null, { headers: CORS_HEADERS });
   }
@@ -1290,6 +1297,13 @@ async function handleLeadIngest(request, env) {
         // Keep index at 500 entries max
         if (idx.length > 500) idx.splice(500);
         await env.SPAM_LOG.put('leads:index', JSON.stringify(idx), { expirationTtl: 7776000 });
+
+        // Fire-and-forget enrichment via Abstract/NumVerify (no-op when no key).
+        if (ctx && phone) {
+          const cleanPh = phone.replace(/\D/g, '');
+          const e164 = cleanPh.length === 10 ? `+1${cleanPh}` : cleanPh.length === 11 ? `+${cleanPh}` : null;
+          if (e164) ctx.waitUntil(enrichLeadAtSave(leadKey, e164, env));
+        }
       } catch (e) {
         console.error('KV lead store failed:', e.message);
       }
@@ -1425,6 +1439,91 @@ function bucketize(score) {
   if (score >= 51) return 'medium';
   if (score >= 26) return 'low';
   return 'junk';
+}
+
+// Fire-and-forget enrichment at save-time. Reverse-phone-lookup via either
+// AbstractAPI (preferred) or NumVerify (fallback). Writes the same shape as
+// tools/lead-enrichment.py to KV `lead_enrichment:<leadId>` so the
+// quality-report endpoint picks it up on the next read.
+//
+// Costa: to enable this, add ABSTRACT_PHONE_API_KEY (or NUMVERIFY_API_KEY) as
+// a wrangler secret. Without a key, this function silently no-ops — so it's
+// safe to deploy with the secret missing.
+async function enrichLeadAtSave(leadId, phoneE164, env) {
+  if (!env.SPAM_LOG || !leadId || !phoneE164) return;
+  const abstractKey = env.ABSTRACT_PHONE_API_KEY;
+  const numverifyKey = env.NUMVERIFY_API_KEY;
+  if (!abstractKey && !numverifyKey) return;
+
+  let line_type = null;
+  let carrier = null;
+  let raw = null;
+
+  try {
+    if (abstractKey) {
+      const u = `https://phonevalidation.abstractapi.com/v1/?api_key=${encodeURIComponent(abstractKey)}&phone=${encodeURIComponent(phoneE164)}`;
+      const r = await fetch(u);
+      if (r.ok) {
+        const data = await r.json();
+        line_type = (data.type || '').toLowerCase() || null;
+        carrier = data.carrier || null;
+        raw = data;
+      }
+    }
+    if (!line_type && numverifyKey) {
+      const u = `https://apilayer.net/api/validate?access_key=${encodeURIComponent(numverifyKey)}&number=${encodeURIComponent(phoneE164)}&country_code=US&format=1`;
+      const r = await fetch(u);
+      if (r.ok) {
+        const data = await r.json();
+        line_type = (data.line_type || '').toLowerCase() || null;
+        carrier = data.carrier || null;
+        raw = data;
+      }
+    }
+  } catch (e) {
+    console.error('enrichLeadAtSave fetch failed:', e.message);
+    return;
+  }
+
+  // Region-match: phone area code vs site label (simple table — keep in sync
+  // with tools/lead-enrichment.py SITE_AREA_CODES if Costa adds new metros).
+  const SITE_AREA_CODES = {
+    'Knoxville':     ['865'],
+    'Spokane':       ['509'],
+    'Tallahassee':   ['850'],
+    'Lafayette':     ['337'],
+    'Baton Rouge':   ['225'],
+    'Phoenix':       ['480', '602', '623'],
+    'Kingsport':     ['423'],
+    'San Antonio':   ['210', '726'],
+  };
+  let region_match = null;
+  try {
+    const stub = await env.SPAM_LOG.get(leadId);
+    if (stub) {
+      const lead = JSON.parse(stub);
+      const area = (phoneE164.replace(/\D/g, '').slice(-10) || '').slice(0, 3);
+      const expected = SITE_AREA_CODES[lead.site];
+      if (expected) region_match = expected.includes(area);
+    }
+  } catch (e) { /* non-blocking */ }
+
+  try {
+    await env.SPAM_LOG.put(
+      `lead_enrichment:${leadId}`,
+      JSON.stringify({
+        line_type,
+        carrier,
+        region_match,
+        raw,
+        enriched_at: new Date().toISOString(),
+        source: 'inline_at_save',
+      }),
+      { expirationTtl: 7776000 } // 90 days
+    );
+  } catch (e) {
+    console.error('enrichLeadAtSave KV write failed:', e.message);
+  }
 }
 
 async function loadDynamicBlocklist(env) {
@@ -1844,7 +1943,7 @@ const RETELL_SITE_MAP = {
   'agent_d17e4bc682748e8377bc9cb7d0': { label: 'Tally Mobile Mechanic',    from: '+18507263411', form_url: 'https://tallymobilemechanic.com/estimate/' },
 };
 
-async function handleRetellTool(request, env, path) {
+async function handleRetellTool(request, env, path, ctx) {
   let body;
   try { body = await request.json(); } catch (e) {
     return json({ result: 'Error: invalid JSON body' });
@@ -1866,7 +1965,7 @@ async function handleRetellTool(request, env, path) {
   const { call_id: _cid, agent_id: _aid, to_number: _ton, _source, site_domain: _sd, secret: _sec, ...args } = body;
 
   switch (tool) {
-    case 'save_lead':   return await retellSaveLead(args, callId, site, env);
+    case 'save_lead':   return await retellSaveLead(args, callId, site, env, ctx);
     case 'send_sms_form': return await retellSendSmsForm(args, site, env);
     case 'transfer_to_owner': return retellTransfer(args, env);
     case 'report_spam': return await retellReportSpam(args, callId, env);
@@ -1874,7 +1973,7 @@ async function handleRetellTool(request, env, path) {
   }
 }
 
-async function retellSaveLead(args, callId, site, env) {
+async function retellSaveLead(args, callId, site, env, ctx) {
   const { customer_name, last_name, phone, address, service_requested, urgency, sms_ok, problem_description } = args;
   const fullName = [customer_name, last_name].filter(Boolean).join(' ') || 'Unknown';
   const phoneClean = (phone || '').trim();
@@ -1900,9 +1999,17 @@ async function retellSaveLead(args, callId, site, env) {
     console.error('quality scoring failed at save:', e.message);
   }
 
+  let savedKey = null;
   if (env.SPAM_LOG) {
-    const key = `lead:${Date.now()}:${phoneClean.replace(/\D/g, '')}`;
-    await env.SPAM_LOG.put(key, JSON.stringify(lead), { expirationTtl: 7776000 }); // 90 days
+    savedKey = `lead:${Date.now()}:${phoneClean.replace(/\D/g, '')}`;
+    await env.SPAM_LOG.put(savedKey, JSON.stringify(lead), { expirationTtl: 7776000 }); // 90 days
+  }
+
+  // Fire-and-forget enrichment (no-op when no API key configured).
+  if (ctx && savedKey && phoneClean) {
+    const cleanPh = phoneClean.replace(/\D/g, '');
+    const e164 = cleanPh.length === 10 ? `+1${cleanPh}` : cleanPh.length === 11 ? `+${cleanPh}` : null;
+    if (e164) ctx.waitUntil(enrichLeadAtSave(savedKey, e164, env));
   }
 
   const urgencyFlag = urgency === 'emergency' ? '🚨 EMERGENCY — ' : urgency === 'same-day' ? '⚡ SAME-DAY — ' : '';
