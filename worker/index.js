@@ -548,6 +548,11 @@ const BLOCKED_CALLERS = new Set([
   '+19360317459',  // form spam — BANGE backpack bot — 2026-04-21
   '+16072036069',  // spam — Attt Tv cold-call — 2026-04-23
   '+18009432189',  // spam — inaudible/VOIP robocall — Lafayette Septic — 2026-04-26
+  '+15098165476',  // Angi's List spam — 2026-04-27
+  '+17206741296',  // Angi's List spam — 2026-05-01
+  '+14793155613',  // Angi's List spam — 2026-05-04
+  '+13854122496',  // spam — Topeka Foundation Pros — 2026-05-04
+  '+16233362306',  // misdial confirmed — 2026-05-01
 ]);
 
 // Numbers to exclude from the leads dashboard (internal test calls etc.)
