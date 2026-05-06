@@ -756,6 +756,18 @@ async function handleCallStatus(request, env) {
   const to          = formData.get('To')          || '';
   const duration    = parseInt(formData.get('CallDuration') || '0', 10);
 
+  // Immediate alert when a call never connects (CF outage, Worker 502, etc.)
+  if (['busy', 'failed', 'no-answer'].includes(callStatus)) {
+    if (!BLOCKED_CALLERS.has(from)) {
+      const siteLabel = SITE_LABELS[to] || to;
+      const callerFmt = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3');
+      await sendTelegramAlert(env,
+        `🚨 <b>LEAD LOST — ${siteLabel}</b>\n📲 ${callerFmt}\nStatus: ${callStatus}\nCall back NOW.`
+      );
+    }
+    return new Response('OK', { status: 200 });
+  }
+
   // Only act on completed calls
   if (callStatus !== 'completed') {
     return new Response('OK', { status: 200 });
