@@ -1386,7 +1386,29 @@ function json(data, status = 200) {
 // Form leads max out at 70 (no call duration). That's intentional —
 // voice leads are higher value because Retell already filtered for intent.
 
-function computeLeadQualityScore(lead, dynBlocked, enrichment) {
+// Cross-site repeat-phone signal. A real customer almost never submits leads
+// to 3+ different ITD sites within a week — that pattern fingerprints
+// scrapers, lead-resellers, and competitor recon. The penalty is applied AFTER
+// the component scores sum, so a high-quality but repeat-pattern lead still
+// drops into the junk bucket instead of looking like a verified prospect.
+//
+// Returns a Map<cleanPhone, Set<site>> for leads within `windowDays`.
+function buildRepeatPhoneMap(leads, windowDays = 7) {
+  const cutoffMs = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+  const map = new Map();
+  for (const lead of leads) {
+    const tsMs = new Date(lead.timestamp || 0).getTime();
+    if (tsMs < cutoffMs) continue;
+    const cleanPhone = (lead.phone || '').replace(/\D/g, '').slice(-10);
+    if (cleanPhone.length !== 10) continue;
+    const site = lead.site || 'unknown';
+    if (!map.has(cleanPhone)) map.set(cleanPhone, new Set());
+    map.get(cleanPhone).add(site);
+  }
+  return map;
+}
+
+function computeLeadQualityScore(lead, dynBlocked, enrichment, repeatPhoneMap) {
   const components = {};
   const cleanPhone = (lead.phone || '').replace(/\D/g, '').slice(-10);
 
@@ -1447,8 +1469,32 @@ function computeLeadQualityScore(lead, dynBlocked, enrichment) {
     components.region_match = 0;
   }
 
-  const total = Object.values(components).reduce((a, b) => a + b, 0);
-  return { score: total, bucket: bucketize(total), components };
+  const rawTotal = Object.values(components).reduce((a, b) => a + b, 0);
+
+  // Cross-site repeat-phone penalty.
+  // 1 site (normal): 0 penalty.
+  // 2 sites in 7d:   -10 penalty (suspicious; could be a customer comparing
+  //                  cities or a low-effort bot).
+  // 3+ sites in 7d:  -25 penalty (almost always a scraper/lead-reseller).
+  let repeatPenalty = 0;
+  let repeatSiteCount = 1;
+  if (repeatPhoneMap && cleanPhone.length === 10) {
+    const sites = repeatPhoneMap.get(cleanPhone);
+    if (sites) {
+      repeatSiteCount = sites.size;
+      if (repeatSiteCount >= 3) repeatPenalty = 25;
+      else if (repeatSiteCount === 2) repeatPenalty = 10;
+    }
+  }
+  components.repeat_phone_penalty = -repeatPenalty;
+
+  const total = Math.max(0, Math.min(100, rawTotal - repeatPenalty));
+  return {
+    score: total,
+    bucket: bucketize(total),
+    components,
+    repeat_site_count: repeatSiteCount,
+  };
 }
 
 function bucketize(score) {
@@ -1586,16 +1632,25 @@ async function getLeadQualityReport(url, env) {
       }
     }
 
+    // Build repeat-phone-across-sites map across ALL fetched leads (not just
+    // the windowed subset) so a phone that hit 3 sites yesterday and 1 today
+    // still gets correctly flagged on today's record.
+    const repeatPhoneMap = buildRepeatPhoneMap(leads, 7);
+
     const buckets = { high: 0, medium: 0, low: 0, junk: 0 };
     const scored = [];
+    let repeatFlagged = 0;
     for (const lead of leads) {
       const tsMs = new Date(lead.timestamp || 0).getTime();
       if (tsMs < sinceMs) continue;
       const enrichment = enrichmentMap[lead.id] || null;
-      const { score, bucket, components } = computeLeadQualityScore(lead, dynBlocked, enrichment);
+      const { score, bucket, components, repeat_site_count } =
+        computeLeadQualityScore(lead, dynBlocked, enrichment, repeatPhoneMap);
       buckets[bucket] += 1;
+      if (repeat_site_count >= 2) repeatFlagged += 1;
       scored.push({
         id: lead.id, score, bucket, components,
+        repeat_site_count,
         name: lead.name || lead.fullName, phone: lead.phone,
         site: lead.site, source: lead.source, timestamp: lead.timestamp,
         enriched: !!enrichment,
@@ -1615,6 +1670,7 @@ async function getLeadQualityReport(url, env) {
       enrichment_coverage: leads.length
         ? Math.round((Object.keys(enrichmentMap).length / leads.length) * 100) + '%'
         : '0%',
+      cross_site_repeat_phones: repeatFlagged,
       generated_at: new Date().toISOString(),
       leads: scored,
     });
