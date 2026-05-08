@@ -293,6 +293,21 @@ export default {
       return await handleLeadIngest(request, env, ctx);
     }
 
+    // ── Sendblue inbound SMS webhook ──
+    // Sendblue dashboard → Webhooks → Inbound URL points here. Captures contractor
+    // replies to our outbound iMessage Touch-1 sequence. Stores in SPAM_LOG KV
+    // (sms_reply:<phone>:<handle> prefix), Telegrams the lead channel, and feeds
+    // the stop-on-reply gate consumed by tools/sendblue-touch1-cron.py.
+    if (path === '/webhook/sendblue' && request.method === 'POST') {
+      return await handleSendblueInbound(request, env, ctx);
+    }
+
+    // ── Replied-numbers query (consumed by SMS Touch-1 cron) ──
+    // GET /sms/replied-numbers?since=ISO8601 → { ok, count, numbers: [{number, last_reply_at}] }
+    if (path === '/sms/replied-numbers' && request.method === 'GET') {
+      return await handleRepliedNumbers(request, env);
+    }
+
     // ── Retell Voice Agent: report-spam (public, secret-gated) ──
     if (path === '/report-spam' && request.method === 'POST') {
       try {
@@ -1358,6 +1373,180 @@ async function sendTelegramAlert(env, message) {
       })
     });
   } catch (e) { /* silent fail */ }
+}
+
+// SMS replies are hot lead signals — route to the lead alerts channel when
+// configured (TELEGRAM_LEAD_CHAT_ID), fall back to Costa's personal chat.
+async function sendTelegramLeadAlert(env, message) {
+  const token  = env.TELEGRAM_BOT_TOKEN;
+  const chatId = env.TELEGRAM_LEAD_CHAT_ID || env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      })
+    });
+  } catch (e) { /* silent fail */ }
+}
+
+// E.164-ish escape for HTML — keeps + and digits, strips anything weird.
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ── Sendblue inbound SMS webhook handler ───────────────────────────────────
+// Architecture:
+//   - Sendblue posts JSON: { number, content, message_handle, date_sent, is_outbound }
+//   - We skip outbound echoes (Sendblue replays our own sends to the same webhook)
+//   - We persist to SPAM_LOG KV under `sms_reply:<E164>:<handle>` (60-day TTL,
+//     same as dyn_block — keeps single namespace and matches existing pattern)
+//   - Telegram alert to lead channel — replies are conversion signal #1
+//   - Returns 200 quickly so Sendblue doesn't retry; storage failure is logged
+//     but doesn't propagate (Sendblue retry loops are worse than a missed write)
+async function handleSendblueInbound(request, env, ctx) {
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ ok: false, error: 'invalid_json' }, 400);
+  }
+
+  // Optional shared-secret check — Sendblue can send a custom header per their
+  // docs. Set SENDBLUE_WEBHOOK_SECRET to enable; if unset we accept all (some
+  // setups can't add headers). Cloudflare's source IP is otherwise public.
+  if (env.SENDBLUE_WEBHOOK_SECRET) {
+    const got = request.headers.get('x-sendblue-secret') || '';
+    if (got !== env.SENDBLUE_WEBHOOK_SECRET) {
+      return json({ ok: false, error: 'forbidden' }, 403);
+    }
+  }
+
+  // Sendblue posts the same payload shape for outbound delivery callbacks
+  // (status_callback) and inbound replies. is_outbound=true means it's an echo
+  // of our own send — skip storing it as a "reply".
+  if (payload.is_outbound === true) {
+    return json({ ok: true, ignored: 'outbound_echo' });
+  }
+
+  const fromNumber  = String(payload.number || payload.from_number || 'unknown');
+  const content     = String(payload.content || '');
+  const handle      = String(payload.message_handle || `nohandle-${Date.now()}`);
+  const dateSent    = String(payload.date_sent || new Date().toISOString());
+  const receivedAt  = Date.now();
+
+  // KV write — 60 day TTL matches dyn_block convention. Idempotent: same handle
+  // overwrites the same key, so Sendblue retries don't double-record.
+  let stored = false;
+  if (env.SPAM_LOG) {
+    try {
+      const safeNum = fromNumber.replace(/[^+0-9]/g, '');
+      const key = `sms_reply:${safeNum}:${handle}`;
+      await env.SPAM_LOG.put(key, JSON.stringify({
+        from_number: fromNumber,
+        content,
+        message_handle: handle,
+        date_sent: dateSent,
+        received_at: receivedAt
+      }), { expirationTtl: 60 * 24 * 60 * 60 }); // 60 days
+      stored = true;
+    } catch (e) {
+      console.error('sendblue inbound KV write failed:', e?.message || e);
+    }
+  }
+
+  // Telegram alert — queued so we return to Sendblue fast; ctx.waitUntil keeps
+  // the worker alive for the alert to flush after we respond.
+  const truncated = content.length > 600 ? content.slice(0, 600) + '…' : content;
+  const tgText =
+    `📱 <b>SMS reply received</b>\n` +
+    `From: <code>${escapeHtml(fromNumber)}</code>\n` +
+    `At: ${escapeHtml(dateSent)}\n\n` +
+    `${escapeHtml(truncated)}\n\n` +
+    `<i>Auto-paused future SMS to this number.</i>`;
+  const alertPromise = sendTelegramLeadAlert(env, tgText);
+  if (ctx && ctx.waitUntil) {
+    ctx.waitUntil(alertPromise);
+  } else {
+    await alertPromise.catch(() => {});
+  }
+
+  return json({ ok: true, stored });
+}
+
+// ── Replied-numbers list (consumed by SMS Touch-1 cron) ────────────────────
+// Returns distinct phone numbers that have replied since the `since` timestamp.
+// SMS cron calls this before every send to skip prospects who already replied.
+//
+// Implementation: KV list with prefix `sms_reply:`, group by phone, return
+// distinct numbers with most recent reply timestamp. KV list returns up to 1000
+// keys per page — at 50 prospects/day × 60-day TTL = 3000 max keys, so we
+// paginate cursor-style. 60-day TTL bounds cost.
+async function handleRepliedNumbers(request, env) {
+  if (!env.SPAM_LOG) {
+    return json({ ok: false, error: 'kv_unavailable' }, 503);
+  }
+  const url = new URL(request.url);
+  const sinceParam = url.searchParams.get('since');
+  // Default: 90 days back (covers full Touch-1+ outreach window).
+  const since = sinceParam ? Date.parse(sinceParam) : (Date.now() - 90 * 24 * 60 * 60 * 1000);
+  if (Number.isNaN(since)) {
+    return json({ ok: false, error: 'invalid_since' }, 400);
+  }
+
+  // Authoritative source-of-truth gate: this endpoint feeds a fail-closed
+  // check in the SMS cron. Don't 200 with empty results on partial failure.
+  const byNumber = new Map(); // number -> { number, last_reply_at }
+  try {
+    let cursor;
+    let safety = 0;
+    do {
+      const list = await env.SPAM_LOG.list({ prefix: 'sms_reply:', cursor });
+      for (const k of list.keys) {
+        // Key shape: sms_reply:<E164>:<handle>
+        const parts = k.name.split(':');
+        if (parts.length < 3) continue;
+        const number = parts[1];
+        // Pull metadata: cheap if we stored it as KV value, but list() doesn't
+        // return values. We'd need a get() per key — costly at scale. Use the
+        // key's expiration to derive an approximate timestamp instead, OR
+        // store metadata at write-time (preferred path).
+        // For now: do a get() — KV reads are 0.50/M and we list ~3K keys max.
+        const raw = await env.SPAM_LOG.get(k.name);
+        if (!raw) continue;
+        let rec;
+        try { rec = JSON.parse(raw); } catch { continue; }
+        const replyTs = Number(rec.received_at || 0);
+        if (!replyTs || replyTs < since) continue;
+        const existing = byNumber.get(number);
+        if (!existing || replyTs > existing.last_reply_at) {
+          byNumber.set(number, { number, last_reply_at: replyTs });
+        }
+      }
+      cursor = list.list_complete ? undefined : list.cursor;
+      safety += 1;
+    } while (cursor && safety < 20);
+  } catch (e) {
+    return json({ ok: false, error: 'kv_query_failed', detail: String(e?.message || e) }, 500);
+  }
+
+  const numbers = [...byNumber.values()]
+    .sort((a, b) => b.last_reply_at - a.last_reply_at)
+    .map(n => ({ number: n.number, last_reply_at: new Date(n.last_reply_at).toISOString() }));
+
+  return json({
+    ok: true,
+    since: new Date(since).toISOString(),
+    count: numbers.length,
+    numbers,
+  });
 }
 
 function twiml(xml) {
