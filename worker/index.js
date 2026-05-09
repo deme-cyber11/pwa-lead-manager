@@ -474,6 +474,31 @@ export default {
       return await getLeadDetail(leadId, env);
     }
 
+    // ── Call quality scores (read by weekly digest / judge cron) ──
+    // GET /api/call-scores?since=ISO8601&limit=50 → { ok, scores: [...] }
+    // POST /api/call-scores   body: { call_id, agent, scores: {}, summary, ts }
+    if (path === '/api/call-scores') {
+      const pin = url.searchParams.get('pin') || providedPin;
+      if (pin !== env.AUTH_PIN) return json({ error: 'Unauthorized' }, 401);
+      if (request.method === 'GET') {
+        const since = url.searchParams.get('since');
+        const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+        try {
+          const list = await env.SPAM_LOG.list({ prefix: 'voice:judge:' });
+          const keys = list.keys.slice(-Math.min(limit, 200));
+          const items = await Promise.all(keys.map(k => env.SPAM_LOG.get(k.name).then(v => { try { return JSON.parse(v); } catch { return null; } })));
+          const scores = items.filter(Boolean).filter(s => !since || (s.ts || '') >= since).reverse();
+          return json({ ok: true, count: scores.length, scores });
+        } catch (e) { return json({ error: e.message }, 500); }
+      }
+      if (request.method === 'POST') {
+        const body = await request.json();
+        const callId = body.call_id || `manual_${Date.now()}`;
+        await env.SPAM_LOG.put(`voice:judge:${body.ts || new Date().toISOString()}:${callId}`, JSON.stringify({ ...body, stored_at: new Date().toISOString() }), { expirationTtl: 7776000 });
+        return json({ ok: true, stored: callId });
+      }
+    }
+
     // Auth check for all other routes
     const authToken = request.headers.get('X-Auth-Token');
     if (authToken !== env.AUTH_PIN) {
@@ -2256,6 +2281,8 @@ async function handleRetellTool(request, env, path, ctx) {
       case 'send_demo_link':         return await kimSendDemoLink(args, env);
       case 'lookup_caller':          return await kimLookupCaller(args, env);
       case 'request_callback_costa': return await kimRequestCallbackCosta(args, callId, env);
+      case 'pre_call_brief':         return await kimPreCallBrief(args, env);
+      case 'apollo_enrich':          return await apolloEnrich(args, env);
       default: return json({ result: `Error: unknown itd tool "${tool}"` });
     }
   }
@@ -2279,6 +2306,8 @@ async function handleRetellTool(request, env, path, ctx) {
       case 'update_klaviyo_event':   return await carolinaUpdateKlaviyoEvent(args, env);
       case 'save_disposition':       return await carolinaSaveDisposition(args, callId, env);
       case 'transfer_to_owner':      return carolinaTransferToOwner(args, env);
+      case 'pre_call_brief':         return await carolinaPreCallBrief(args, env);
+      case 'apollo_enrich':          return await apolloEnrich(args, env);
       default: return json({ result: `Error: unknown source4 tool "${tool}"` });
     }
   }
@@ -2528,6 +2557,82 @@ async function kimRequestCallbackCosta(args, callId, env) {
   await sendTelegramAlert(env,
     `📞 <b>Kim — Callback requested</b>\n👤 ${name || 'Unknown'}\n📱 ${phone || '(no number)'}\n🕐 ${preferred_time || 'asap'}${reason ? `\n📝 ${reason}` : ''}`);
   return json({ result: `Got it — Costa will call ${name ? name + ' ' : ''}back ${preferred_time ? 'around ' + preferred_time : 'within a couple hours'}.` });
+}
+
+// ── Pre-call brief + Apollo enrichment (shared across ITD + Source4) ──────────
+
+async function buildCallerBrief(env, tenant, phone) {
+  if (!phone) return null;
+  const phoneClean = String(phone).replace(/\D/g, '');
+  if (!phoneClean) return null;
+  const prior = await kvListPriorCalls(env, tenant, phone, 10);
+  if (!prior.length) return null;
+
+  const outcomes = prior.map(p => p.outcome || p.call_outcome || p.disposition || 'inquiry');
+  const lastOutcome = outcomes[0];
+  const lastDate = (prior[0].saved_at || prior[0].looked_up_at || '').slice(0, 10) || 'unknown';
+  const notes = prior.map(p => p.notes).filter(Boolean).slice(0, 3).join('; ');
+  const name = prior.map(p => p.customer_name || p.name).filter(Boolean)[0] || null;
+  const company = prior.map(p => p.company).filter(Boolean)[0] || null;
+  const email = prior.map(p => p.email).filter(Boolean)[0] || null;
+  const sku = prior.map(p => p.sku_or_product).filter(Boolean)[0] || null;
+
+  let brief = `Prior caller — ${prior.length} interaction${prior.length > 1 ? 's' : ''}.`;
+  if (name) brief += ` Name: ${name}.`;
+  if (company) brief += ` Company: ${company}.`;
+  if (email) brief += ` Email: ${email}.`;
+  brief += ` Last contact: ${lastOutcome} on ${lastDate}.`;
+  if (sku) brief += ` Prev interest: ${sku}.`;
+  if (notes) brief += ` Notes: ${notes.slice(0, 300)}.`;
+
+  return brief;
+}
+
+async function kimPreCallBrief(args, env) {
+  const phone = args.phone || args.from_number || args.caller_number;
+  const brief = await buildCallerBrief(env, 'itd', phone);
+  if (!brief) return json({ brief: null, first_time: true, result: 'First time caller — no prior history.' });
+  return json({ brief, first_time: false, result: brief });
+}
+
+async function carolinaPreCallBrief(args, env) {
+  const phone = args.phone || args.from_number || args.caller_number;
+  const brief = await buildCallerBrief(env, 'source4', phone);
+  if (!brief) return json({ brief: null, first_time: true, result: 'First time caller — no prior history.' });
+  return json({ brief, first_time: false, result: brief });
+}
+
+async function apolloEnrich(args, env) {
+  const { phone, email, company } = args;
+  if (!env.APOLLO_API_KEY) {
+    return json({ enriched: false, reason: 'Apollo not configured', result: 'No enrichment available — proceeding without company context.' });
+  }
+  try {
+    const query = {};
+    if (phone) query.phone = phone;
+    if (email) query.email = email;
+    if (company) query.organization_name = company;
+    const r = await fetch('https://api.apollo.io/api/v1/people/match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', 'X-Api-Key': env.APOLLO_API_KEY },
+      body: JSON.stringify(query),
+    });
+    if (!r.ok) throw new Error(`Apollo ${r.status}`);
+    const data = await r.json();
+    const person = data.person || {};
+    const org = person.organization || {};
+    const result = [
+      person.name ? `Contact: ${person.name}` : null,
+      person.title ? `Title: ${person.title}` : null,
+      org.name ? `Company: ${org.name}` : null,
+      org.industry ? `Industry: ${org.industry}` : null,
+      org.estimated_num_employees ? `Size: ${org.estimated_num_employees} employees` : null,
+      org.annual_revenue_printed ? `Revenue: ${org.annual_revenue_printed}` : null,
+    ].filter(Boolean).join('. ');
+    return json({ enriched: true, result: result || 'Enrichment returned no data.' });
+  } catch (e) {
+    return json({ enriched: false, reason: e.message, result: 'Enrichment unavailable — proceeding fresh.' });
+  }
 }
 
 // ── Carolina (Source 4) tool handlers ──────────────────────────────────────────
