@@ -419,18 +419,15 @@ export default {
       }
     }
 
-    // ── Retell Voice Agent Tools — Sarah inbound lead capture ──
-    // Tools: save_lead, send_sms_form, transfer_to_owner, report_spam
-    // Auth: WEBHOOK_SECRET checked in body or x-api-key header.
+    // ── Retell Voice Agent Tools — multi-tenant ──
+    // Sarah (RR sites):    /retell/save_lead, /retell/send_sms_form, etc.
+    // Kim (ITD outbound + inbound):  /retell/itd/<tool>
+    // Carolina (Source 4 outbound + inbound):  /retell/source4/<tool>
+    // Auth: WEBHOOK_SECRET in body or x-api-key header.
     if (path.startsWith('/retell/') && request.method === 'POST') {
       return await handleRetellTool(request, env, path, ctx);
     }
-
-    // ── Vapi Voice Tool Endpoints — Elise outbound seller ──
-    // Each Elise tool posts to its own URL. Auth via x-vapi-secret header (VAPI_SECRET env).
-    if (path.startsWith('/voice/') && request.method === 'POST') {
-      return await handleVapiTool(request, env, path);
-    }
+    // Vapi /voice/* handler retired 2026-05-09 — Elise dead, all agents on Retell.
 
     // ── Calendly Webhook ──
     if (path === '/webhook/calendly' && request.method === 'POST') {
@@ -2218,21 +2215,75 @@ async function handleRetellTool(request, env, path, ctx) {
     return json({ result: 'Error: unauthorized' }, 401);
   }
 
-  const tool = path.replace('/retell/', '');
+  // Path forms:
+  //   /retell/<tool>           → Sarah (legacy, RR-site agents)
+  //   /retell/itd/<tool>       → Kim (ITD outbound + inbound)
+  //   /retell/source4/<tool>   → Carolina (Source 4 inbound + outbound)
+  const tail = path.replace('/retell/', '');
+  const segs = tail.split('/').filter(Boolean);
+  let tenant, tool;
+  if (segs.length >= 2 && (segs[0] === 'itd' || segs[0] === 'source4')) {
+    tenant = segs[0];
+    tool = segs.slice(1).join('/');
+  } else {
+    tenant = 'sarah';
+    tool = segs[0] || '';
+  }
+
   const callId = body.call_id || '';
   const agentId = body.agent_id || '';
-  const site = RETELL_SITE_MAP[agentId] || { label: 'Iron Tiger Digital', from: BAYOU_TECHE_FROM, form_url: BAYOU_TECHE_FORM };
-  // Retell sends a flat merged body (payload_schema + parameters), not a nested args object.
-  // Strip out meta fields so args contains only semantic tool parameters.
+  // Retell sends flat body (payload_schema + parameters merged), not nested args.
+  // Strip meta fields so args contains only semantic tool parameters.
   const { call_id: _cid, agent_id: _aid, to_number: _ton, _source, site_domain: _sd, secret: _sec, ...args } = body;
 
-  switch (tool) {
-    case 'save_lead':   return await retellSaveLead(args, callId, site, env, ctx);
-    case 'send_sms_form': return await retellSendSmsForm(args, site, env);
-    case 'transfer_to_owner': return retellTransfer(args, env);
-    case 'report_spam': return await retellReportSpam(args, callId, env);
-    default: return json({ result: `Error: unknown tool "${tool}"` });
+  if (tenant === 'sarah') {
+    const site = RETELL_SITE_MAP[agentId] || { label: 'Iron Tiger Digital', from: BAYOU_TECHE_FROM, form_url: BAYOU_TECHE_FORM };
+    switch (tool) {
+      case 'save_lead':         return await retellSaveLead(args, callId, site, env, ctx);
+      case 'send_sms_form':     return await retellSendSmsForm(args, site, env);
+      case 'transfer_to_owner': return retellTransfer(args, env);
+      case 'report_spam':       return await retellReportSpam(args, callId, env);
+      default: return json({ result: `Error: unknown sarah tool "${tool}"` });
+    }
   }
+
+  if (tenant === 'itd') {
+    switch (tool) {
+      case 'book_demo':              return await kimBookDemo(args, callId, env);
+      case 'save_disposition':       return await kimSaveDisposition(args, callId, env);
+      case 'transfer_to_owner':      return kimTransferToOwner(args, env);
+      case 'request_quote':          return kimRequestQuote(args, env);
+      case 'send_demo_link':         return await kimSendDemoLink(args, env);
+      case 'lookup_caller':          return await kimLookupCaller(args, env);
+      case 'request_callback_costa': return await kimRequestCallbackCosta(args, callId, env);
+      default: return json({ result: `Error: unknown itd tool "${tool}"` });
+    }
+  }
+
+  if (tenant === 'source4') {
+    switch (tool) {
+      case 'lookup_caller':          return await carolinaLookupCaller(args, env);
+      case 'submit_quote_intake':    return await carolinaSubmitQuoteIntake(args, callId, env);
+      case 'lookup_order':           return await carolinaLookupOrder(args, env);
+      case 'book_spec_call':         return await carolinaBookSpecCall(args, callId, env);
+      case 'request_freight_quote':  return await carolinaRequestFreightQuote(args, callId, env);
+      case 'request_pricing':        return await carolinaRequestPricing(args, callId, env);
+      case 'check_inventory':        return await carolinaCheckInventory(args, env);
+      case 'resend_quote':           return await carolinaResendQuote(args, callId, env);
+      case 'transfer_to_sales':      return carolinaTransferToSales(args, env);
+      case 'transfer_to_logistics':  return carolinaTransferToLogistics(args, env);
+      case 'route_to_support':       return carolinaRouteToSupport(args, env);
+      case 'route_to_billing':       return carolinaRouteToBilling(args, env);
+      case 'log_service_issue':      return await carolinaLogServiceIssue(args, callId, env);
+      case 'request_email_followup': return await carolinaRequestEmailFollowup(args, callId, env);
+      case 'update_klaviyo_event':   return await carolinaUpdateKlaviyoEvent(args, env);
+      case 'save_disposition':       return await carolinaSaveDisposition(args, callId, env);
+      case 'transfer_to_owner':      return carolinaTransferToOwner(args, env);
+      default: return json({ result: `Error: unknown source4 tool "${tool}"` });
+    }
+  }
+
+  return json({ result: `Error: unknown tenant "${tenant}"` });
 }
 
 async function retellSaveLead(args, callId, site, env, ctx) {
@@ -2332,36 +2383,362 @@ async function retellReportSpam(args, callId, env) {
   return json({ result: 'Number logged. Ending call now.' });
 }
 
-// ── Vapi Tool Handler ──────────────────────────────────────────────────────────
+// ── Voice helpers (KV storage + Brevo email) ───────────────────────────────────
 
-async function handleVapiTool(request, env, path) {
-  if (env.VAPI_SECRET) {
-    const secret = request.headers.get('x-vapi-secret');
-    if (secret !== env.VAPI_SECRET) {
-      return json({ results: [{ toolCallId: 'unknown', result: 'Error: unauthorized' }] });
-    }
+async function kvPut(env, key, payload, ttlSec = 7776000) {
+  if (!env.SPAM_LOG) return;
+  try { await env.SPAM_LOG.put(key, JSON.stringify(payload), { expirationTtl: ttlSec }); }
+  catch (e) { console.error('kvPut error:', e.message); }
+}
+
+async function kvListPriorCalls(env, tenant, phone, limit = 5) {
+  if (!env.SPAM_LOG || !phone) return [];
+  try {
+    const phoneClean = String(phone).replace(/\D/g, '');
+    if (!phoneClean) return [];
+    const list = await env.SPAM_LOG.list({ prefix: `voice:${tenant}:caller:${phoneClean}:` });
+    const recent = list.keys.slice(-limit);
+    const items = await Promise.all(recent.map(k => env.SPAM_LOG.get(k.name).then(v => { try { return JSON.parse(v); } catch { return null; } })));
+    return items.filter(Boolean).reverse();
+  } catch (e) { console.error('kvListPriorCalls error:', e.message); return []; }
+}
+
+async function brevoSend(env, fromName, fromEmail, toEmail, subject, htmlContent, textContent) {
+  if (!env.BREVO_API_KEY || !toEmail) return false;
+  try {
+    const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sender: { name: fromName, email: fromEmail },
+        to: [{ email: toEmail }],
+        subject,
+        ...(htmlContent ? { htmlContent } : {}),
+        ...(textContent ? { textContent } : {}),
+      })
+    });
+    return r.ok;
+  } catch (e) { console.error('brevoSend error:', e.message); return false; }
+}
+
+function source4Routing(env) {
+  return {
+    salesEmail:     env.SOURCE4_SALES_EMAIL     || 'costa@irontigerdigital.com',
+    logisticsEmail: env.SOURCE4_LOGISTICS_EMAIL || 'costa@irontigerdigital.com',
+    supportEmail:   env.SOURCE4_SUPPORT_EMAIL   || 'costa@irontigerdigital.com',
+    billingEmail:   env.SOURCE4_BILLING_EMAIL   || 'costa@irontigerdigital.com',
+    salesPhone:     env.SOURCE4_SALES_PHONE     || '',
+    logisticsPhone: env.SOURCE4_LOGISTICS_PHONE || '',
+    supportPhone:   env.SOURCE4_SUPPORT_PHONE   || '',
+    billingPhone:   env.SOURCE4_BILLING_PHONE   || '',
+  };
+}
+
+// ── Kim (ITD outbound + inbound) tool handlers ─────────────────────────────────
+
+async function kimBookDemo(args, callId, env) {
+  const { prospect_id, slot_iso, email, notes, phone } = args;
+  const bookingUrl = await getCalendlyBookingUrl(env);
+  const isUnique = bookingUrl !== CALENDLY_FALLBACK_URL;
+
+  await kvPut(env, `voice:itd:demo_booking:${Date.now()}:${prospect_id || 'na'}`, {
+    prospect_id, slot_iso, email, phone, notes, call_id: callId,
+    booking_url: bookingUrl, unique_link: isUnique, status: 'calendly_link_sent'
+  });
+  if (phone) await kvPut(env, `voice:itd:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { phone, outcome: 'demo_booked', call_id: callId, notes });
+
+  if (email) {
+    await brevoSend(env, 'Iron Tiger Digital', 'irontigerdigital@gmail.com', email,
+      'Pick a 15-min slot with Costa',
+      `<div style="font-family:Arial,sans-serif;color:#333;max-width:600px"><h2 style="color:#c45c26">Let's lock in your demo</h2><p>As promised, here's the link to pick a 15-minute slot with Costa to walk through the site, the lead numbers, and pricing for your area:</p><p style="margin:24px 0"><a href="${bookingUrl}" style="background:#c45c26;color:#fff;padding:12px 28px;text-decoration:none;border-radius:4px;font-weight:bold">Pick a Time →</a></p><p style="color:#888;font-size:13px">— Iron Tiger Digital</p></div>`);
   }
 
-  let body;
-  try { body = await request.json(); } catch (e) {
-    return json({ results: [{ toolCallId: 'unknown', result: 'Error: invalid request body' }] });
-  }
+  await sendTelegramAlert(env,
+    `📅 <b>Kim — Demo link sent</b>\n📧 ${email || '(no email)'}\n🆔 ${prospect_id || '(no id)'}${notes ? `\n📝 ${notes}` : ''}\n🔗 ${bookingUrl}${isUnique ? ' (unique)' : ' (fallback)'}`);
 
-  const toolCall = body?.message?.toolCallList?.[0];
-  const toolCallId = toolCall?.id || 'unknown';
-  const callId = body?.message?.call?.id || '';
-  let args = {};
-  try { args = JSON.parse(toolCall?.function?.arguments || '{}'); } catch (e) { /* use empty */ }
+  return json({ result: email
+    ? `I just sent the Calendly link to ${email}. Pick whatever time works — Costa will get the invite the moment you book it.`
+    : `I'll have Costa send the Calendly link over to you. What's the best email?`
+  });
+}
 
-  const tool = path.replace('/voice/', '');
-  switch (tool) {
-    case 'book_demo':          return await vapiBookDemo(args, toolCallId, callId, env);
-    case 'save_disposition':   return await vapiSaveDisposition(args, toolCallId, callId, env);
-    case 'transfer_to_owner':  return await vapiTransferToOwner(args, toolCallId, env);
-    case 'request_quote':      return await vapiRequestQuote(args, toolCallId, env);
-    case 'send_demo_link':     return await vapiSendDemoLink(args, toolCallId, env);
-    default: return json({ results: [{ toolCallId, result: 'Error: unknown tool path' }] });
+async function kimSaveDisposition(args, callId, env) {
+  const { prospect_id, outcome, notes, callback_at, phone } = args;
+  await kvPut(env, `voice:itd:disposition:${callId || Date.now()}:${prospect_id || 'na'}`, {
+    prospect_id, outcome, notes, callback_at, phone, call_id: callId
+  });
+  if (phone) await kvPut(env, `voice:itd:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { phone, outcome, notes, call_id: callId });
+  const flag = { sold: '💰', demo_booked: '📅', callback: '📞', dnc: '🚫' }[outcome];
+  if (flag) await sendTelegramAlert(env,
+    `${flag} <b>Kim — ${String(outcome).replace(/_/g,' ').toUpperCase()}</b>\n🆔 ${prospect_id || '?'}${phone ? `\n📱 ${phone}` : ''}${notes ? `\n📝 ${notes}` : ''}${callback_at ? `\n🔁 Callback: ${callback_at}` : ''}`);
+  return json({ result: `Saved: ${outcome}` });
+}
+
+function kimTransferToOwner(args, env) {
+  const { reason } = args;
+  sendTelegramAlert(env, `📲 <b>Kim — LIVE TRANSFER incoming</b>\nConnecting prospect to Costa now\n📝 ${reason || 'prospect requested human'}`).catch(()=>{});
+  return json({
+    result: 'Connecting you with Costa now — please hold for just a moment.',
+    action: { type: 'transfer_call', number: COSTA_PHONE }
+  });
+}
+
+function kimRequestQuote(args, env) {
+  const { niche, city } = args;
+  const nicheKey = String(niche || '').toLowerCase().trim();
+  const cityKey  = String(city  || '').toLowerCase().trim();
+  const p = PRICING_MATRIX[nicheKey];
+  if (!p) {
+    return json({ result: `Real number depends on your market — let me set the demo so Costa can run the actual quote for your area.` });
   }
+  const tierIdx = TIER1_CITIES.has(cityKey) ? 0 : TIER3_CITIES.has(cityKey) ? 2 : 1;
+  const band = [p.t1, p.t2, p.t3][tierIdx];
+  const flat = Math.round((band[0] + band[1]) / 2 / 50) * 50;
+  const ppl  = p.ppl[tierIdx];
+  return json({ result: `$${flat.toLocaleString()}/month flat — all leads exclusive, month-to-month, 30-day cancel, no setup fee. Or pay-per-lead at $${ppl}/qualified lead if you'd rather not commit monthly.` });
+}
+
+async function kimSendDemoLink(args, env) {
+  const { email, prospect_id } = args;
+  if (!email) return json({ result: "What's the best email to send the demo link to?" });
+  const demoUrl = 'https://demo.irontigerdigital.com';
+  const ok = await brevoSend(env, 'Iron Tiger Digital', 'irontigerdigital@gmail.com', email,
+    'Your Iron Tiger Digital demo site',
+    `<div style="font-family:Arial,sans-serif;color:#333;max-width:600px"><h2 style="color:#c45c26">Iron Tiger Digital — Demo Site</h2><p>As promised, here's a look at what you'd be getting:</p><p style="margin:24px 0"><a href="${demoUrl}" style="background:#c45c26;color:#fff;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:bold">View Demo Site →</a></p><p>Your site would be built and ranked for your specific niche and city. To see live lead data and walk through the numbers, grab a 15-minute slot with Costa.</p><p style="color:#888;font-size:13px">— Kim · Iron Tiger Digital</p></div>`,
+    null);
+  await kvPut(env, `voice:itd:demo_link:${Date.now()}:${prospect_id || 'na'}`, { email, prospect_id, sent: ok });
+  return json({ result: ok ? `Demo link sent to ${email}.` : "Email failed — I've noted it and Costa will follow up directly." });
+}
+
+async function kimLookupCaller(args, env) {
+  const phone = args.phone || args.from_number || args.caller_number;
+  if (!phone) return json({ result: 'No prior calls found — proceeding fresh.' });
+  const prior = await kvListPriorCalls(env, 'itd', phone);
+  await kvPut(env, `voice:itd:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { phone, looked_up_at: new Date().toISOString() });
+  if (!prior.length) return json({ result: 'No prior calls found — first time caller.' });
+  const last = prior[0];
+  const lastDate = last.saved_at ? last.saved_at.slice(0,10) : (last.looked_up_at ? last.looked_up_at.slice(0,10) : 'unknown');
+  return json({ result: `Caller has ${prior.length} prior interaction${prior.length>1?'s':''}. Last: ${last.outcome || last.disposition || 'inquiry'} on ${lastDate}.${last.notes ? ' Note: ' + String(last.notes).slice(0,200) : ''}` });
+}
+
+async function kimRequestCallbackCosta(args, callId, env) {
+  const { phone, name, reason, preferred_time } = args;
+  await kvPut(env, `voice:itd:callback:${Date.now()}`, { phone, name, reason, preferred_time, call_id: callId, source: 'kim_inbound' });
+  if (phone) await kvPut(env, `voice:itd:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { phone, outcome: 'callback_requested', call_id: callId, notes: reason });
+  await sendTelegramAlert(env,
+    `📞 <b>Kim — Callback requested</b>\n👤 ${name || 'Unknown'}\n📱 ${phone || '(no number)'}\n🕐 ${preferred_time || 'asap'}${reason ? `\n📝 ${reason}` : ''}`);
+  return json({ result: `Got it — Costa will call ${name ? name + ' ' : ''}back ${preferred_time ? 'around ' + preferred_time : 'within a couple hours'}.` });
+}
+
+// ── Carolina (Source 4) tool handlers ──────────────────────────────────────────
+
+async function carolinaLookupCaller(args, env) {
+  const phone = args.phone || args.from_number || args.caller_number;
+  if (!phone) return json({ result: 'No caller number — proceeding fresh.' });
+  const prior = await kvListPriorCalls(env, 'source4', phone);
+  await kvPut(env, `voice:source4:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { phone, looked_up_at: new Date().toISOString() });
+  if (!prior.length) return json({ result: 'No prior calls — first time caller.' });
+  const last = prior[0];
+  const lastDate = last.saved_at ? last.saved_at.slice(0,10) : (last.looked_up_at ? last.looked_up_at.slice(0,10) : 'unknown');
+  return json({ result: `Caller has ${prior.length} prior interaction${prior.length>1?'s':''}. Last: ${last.call_outcome || last.outcome || 'inquiry'} on ${lastDate}.${last.notes ? ' Note: ' + String(last.notes).slice(0,200) : ''}` });
+}
+
+async function carolinaSubmitQuoteIntake(args, callId, env) {
+  const { customer_name, company, phone, email, application, sku_or_product, quantity, install_date, ship_zip, notes } = args;
+  const r = source4Routing(env);
+  const payload = { customer_name, company, phone, email, application, sku_or_product, quantity, install_date, ship_zip, notes, call_id: callId };
+  await kvPut(env, `voice:source4:quote_intake:${Date.now()}`, payload);
+  if (phone) await kvPut(env, `voice:source4:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { ...payload, outcome: 'quote_submitted' });
+  await sendTelegramAlert(env,
+    `🛠 <b>Carolina — Quote intake</b>\n👤 ${customer_name || '?'}${company ? ' / ' + company : ''}\n📞 ${phone || '?'}\n📧 ${email || '?'}\n🎯 App: ${application || '?'}\n🆔 SKU/Product: ${sku_or_product || '?'}\n📦 Qty: ${quantity || '?'}\n📅 Install: ${install_date || '?'}\n📮 Ship ZIP: ${ship_zip || '?'}${notes ? `\n📝 ${notes}` : ''}`);
+  await brevoSend(env, 'Carolina (Source 4)', 'noreply@irontigerdigital.com', r.salesEmail,
+    `[Source 4 Voice] New quote intake — ${customer_name || 'Unknown'}${company ? ' / ' + company : ''}`,
+    null,
+    `New quote intake captured by Carolina:\n\nName: ${customer_name || '-'}\nCompany: ${company || '-'}\nPhone: ${phone || '-'}\nEmail: ${email || '-'}\nApplication: ${application || '-'}\nSKU/Product: ${sku_or_product || '-'}\nQuantity: ${quantity || '-'}\nInstall date: ${install_date || '-'}\nShip ZIP: ${ship_zip || '-'}\nNotes: ${notes || '-'}\n\nCall ID: ${callId}\nReply SLA: 4 business hours.`);
+  return json({ result: `Got it — quote intake submitted for ${customer_name || 'you'}. Our sales team will follow up within 4 business hours with pricing and freight.` });
+}
+
+async function carolinaLookupOrder(args, env) {
+  const { order_number, po_number, customer_name } = args;
+  await kvPut(env, `voice:source4:order_lookup_request:${Date.now()}`, args);
+  await sendTelegramAlert(env,
+    `📦 <b>Carolina — Order lookup requested</b>\nOrder: ${order_number || '?'}\nPO: ${po_number || '?'}\nCustomer: ${customer_name || '?'}\n(No OMS integration yet — manual follow-up needed)`);
+  return json({ result: `Let me chase that down for you — I'll have someone from logistics call back with the status within an hour. Best callback number?` });
+}
+
+async function carolinaBookSpecCall(args, callId, env) {
+  const { customer_name, company, email, phone, application, notes } = args;
+  const bookingUrl = await getCalendlyBookingUrl(env);
+  await kvPut(env, `voice:source4:spec_call:${Date.now()}`, { ...args, call_id: callId, booking_url: bookingUrl });
+  if (phone) await kvPut(env, `voice:source4:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { ...args, outcome: 'spec_call_booked', call_id: callId });
+  if (email) {
+    await brevoSend(env, 'Source 4 Industries', 'noreply@irontigerdigital.com', email,
+      'Source 4 — Spec call with our engineer',
+      `<div style="font-family:Arial,sans-serif;color:#333;max-width:600px"><h2 style="color:#c45c26">Let's get your spec sorted</h2><p>Pick a 30-minute slot with our spec engineer to walk through your application:</p><p style="margin:24px 0"><a href="${bookingUrl}" style="background:#c45c26;color:#fff;padding:12px 28px;text-decoration:none;border-radius:4px;font-weight:bold">Book Spec Call →</a></p>${application ? `<p><b>Application:</b> ${application}</p>` : ''}<p style="color:#888;font-size:13px">— Source 4 Industries</p></div>`,
+      null);
+  }
+  await sendTelegramAlert(env,
+    `🔧 <b>Carolina — Spec call booked</b>\n👤 ${customer_name || '?'}${company ? ' / '+company : ''}\n📧 ${email || '(no email)'}\n🎯 ${application || '?'}\n🔗 ${bookingUrl}`);
+  return json({ result: email
+    ? `I just sent you the link to book a spec call with our engineer. Pick whatever time works — they'll have the application notes ready.`
+    : `What's the best email — I'll send you the spec-call booking link right now.` });
+}
+
+async function carolinaRequestFreightQuote(args, callId, env) {
+  const { ship_zip, weight_lbs, dims, items, residential, lift_gate, notes, customer_name, phone, email } = args;
+  const r = source4Routing(env);
+  await kvPut(env, `voice:source4:freight_quote:${Date.now()}`, { ...args, call_id: callId });
+  if (phone) await kvPut(env, `voice:source4:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { ...args, outcome: 'freight_quote_requested', call_id: callId });
+  await sendTelegramAlert(env,
+    `🚚 <b>Carolina — Freight quote requested</b>\n📮 ZIP: ${ship_zip || '?'}\n⚖️ ${weight_lbs || '?'} lbs\n📐 ${dims || '?'}\n📦 ${items || '?'}\n🏠 Residential: ${residential ? 'yes' : 'no'}\n🔼 Lift gate: ${lift_gate ? 'yes' : 'no'}${customer_name ? `\n👤 ${customer_name}` : ''}${phone ? `\n📞 ${phone}` : ''}${notes ? `\n📝 ${notes}` : ''}`);
+  await brevoSend(env, 'Carolina (Source 4)', 'noreply@irontigerdigital.com', r.logisticsEmail,
+    `[Source 4 Voice] Freight quote — ZIP ${ship_zip || '?'}`,
+    null,
+    `Carolina captured a freight-quote request:\n\nZIP: ${ship_zip || '-'}\nWeight: ${weight_lbs || '-'} lbs\nDims: ${dims || '-'}\nItems: ${items || '-'}\nResidential: ${residential ? 'yes' : 'no'}\nLift gate: ${lift_gate ? 'yes' : 'no'}\nCustomer: ${customer_name || '-'}\nPhone: ${phone || '-'}\nEmail: ${email || '-'}\nNotes: ${notes || '-'}\nCall ID: ${callId}\n\nPlease quote and reply within 4 business hours.`);
+  return json({ result: `Got it — freight quote requested. Our logistics team will price it and follow up within a few hours with the freight number and lead time.` });
+}
+
+async function carolinaRequestPricing(args, callId, env) {
+  const { sku_or_product, quantity, customer_name, email, phone, company } = args;
+  const r = source4Routing(env);
+  await kvPut(env, `voice:source4:pricing_request:${Date.now()}`, { ...args, call_id: callId });
+  if (phone) await kvPut(env, `voice:source4:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { ...args, outcome: 'pricing_requested', call_id: callId });
+  await sendTelegramAlert(env,
+    `💰 <b>Carolina — Pricing requested</b>\n🆔 ${sku_or_product || '?'}\n📦 Qty: ${quantity || '?'}\n👤 ${customer_name || '?'}${company ? ' / ' + company : ''}\n📞 ${phone || '?'}\n📧 ${email || '?'}`);
+  await brevoSend(env, 'Carolina (Source 4)', 'noreply@irontigerdigital.com', r.salesEmail,
+    `[Source 4 Voice] Pricing request — ${sku_or_product || 'unspecified'}`,
+    null,
+    `Carolina captured a pricing request:\n\nSKU/Product: ${sku_or_product || '-'}\nQuantity: ${quantity || '-'}\nCustomer: ${customer_name || '-'}\nCompany: ${company || '-'}\nPhone: ${phone || '-'}\nEmail: ${email || '-'}\nCall ID: ${callId}`);
+  return json({ result: `I've routed your pricing request to our sales team. They'll follow up within 4 business hours with volume tiers and any applicable discounts.` });
+}
+
+async function carolinaCheckInventory(args, env) {
+  const { sku_or_product, quantity } = args;
+  await kvPut(env, `voice:source4:inventory_check:${Date.now()}`, args);
+  await sendTelegramAlert(env,
+    `📊 <b>Carolina — Inventory check requested</b>\n🆔 ${sku_or_product || '?'}\n📦 Qty: ${quantity || '?'}\n(No inventory feed yet — manual lookup needed)`);
+  return json({ result: `Let me chase that down — I'll have someone confirm stock and lead time within the hour. What's your callback number?` });
+}
+
+async function carolinaResendQuote(args, callId, env) {
+  const { quote_id, sku_change, customer_email, customer_name } = args;
+  const r = source4Routing(env);
+  await kvPut(env, `voice:source4:resend_quote:${Date.now()}`, { ...args, call_id: callId });
+  await sendTelegramAlert(env,
+    `🔁 <b>Carolina — Resend quote requested</b>\n🆔 Quote: ${quote_id || '?'}${sku_change ? `\n🔄 Spec swap: ${sku_change}` : ''}${customer_email ? `\n📧 ${customer_email}` : ''}${customer_name ? `\n👤 ${customer_name}` : ''}`);
+  await brevoSend(env, 'Carolina (Source 4)', 'noreply@irontigerdigital.com', r.salesEmail,
+    `[Source 4 Voice] Resend quote ${quote_id || ''}${sku_change ? ' (spec swap: ' + sku_change + ')' : ''}`,
+    null,
+    `Carolina captured a resend-quote request:\n\nQuote ID: ${quote_id || '-'}\nSpec swap: ${sku_change || 'none'}\nCustomer email: ${customer_email || '-'}\nCustomer name: ${customer_name || '-'}\nCall ID: ${callId}\n\nPlease resend the original quote PDF${sku_change ? ' with the spec swap applied' : ''}.`);
+  return json({ result: sku_change
+    ? `Got it — sending the updated quote with the ${sku_change} swap. Should be in your inbox within ten minutes.`
+    : `On it — resending the original quote now. Anything else I can pull while you have me?` });
+}
+
+function carolinaTransferToSales(args, env) {
+  const { reason } = args;
+  const r = source4Routing(env);
+  if (r.salesPhone) {
+    sendTelegramAlert(env, `📲 <b>Carolina — Transfer to sales</b>\nReason: ${reason || 'unspecified'}`).catch(()=>{});
+    return json({ result: 'Connecting you with our sales team now — please hold.', action: { type: 'transfer_call', number: r.salesPhone } });
+  }
+  kvPut(env, `voice:source4:callback:sales:${Date.now()}`, args).catch(()=>{});
+  sendTelegramAlert(env, `⚠️ <b>Carolina — Sales transfer queued (no SOURCE4_SALES_PHONE configured)</b>\nReason: ${reason || '?'}`).catch(()=>{});
+  return json({ result: `Our sales team is in a meeting — let me have them call you right back. Best number?` });
+}
+
+function carolinaTransferToLogistics(args, env) {
+  const { reason } = args;
+  const r = source4Routing(env);
+  if (r.logisticsPhone) {
+    sendTelegramAlert(env, `📲 <b>Carolina — Transfer to logistics</b>\nReason: ${reason || '?'}`).catch(()=>{});
+    return json({ result: 'Connecting you with logistics now — please hold.', action: { type: 'transfer_call', number: r.logisticsPhone } });
+  }
+  kvPut(env, `voice:source4:callback:logistics:${Date.now()}`, args).catch(()=>{});
+  sendTelegramAlert(env, `⚠️ <b>Carolina — Logistics transfer queued (no SOURCE4_LOGISTICS_PHONE)</b>\nReason: ${reason || '?'}`).catch(()=>{});
+  return json({ result: `Logistics is on another line — let me have them call you back. Best number?` });
+}
+
+function carolinaRouteToSupport(args, env) {
+  const { reason } = args;
+  const r = source4Routing(env);
+  if (r.supportPhone) {
+    sendTelegramAlert(env, `📲 <b>Carolina — Route to support</b>\n${reason || ''}`).catch(()=>{});
+    return json({ result: 'Connecting you with support now — please hold.', action: { type: 'transfer_call', number: r.supportPhone } });
+  }
+  kvPut(env, `voice:source4:callback:support:${Date.now()}`, args).catch(()=>{});
+  sendTelegramAlert(env, `⚠️ <b>Carolina — Support route queued (no SOURCE4_SUPPORT_PHONE)</b>\n${reason || '?'}`).catch(()=>{});
+  return json({ result: `Let me get support to call you right back. Best number?` });
+}
+
+function carolinaRouteToBilling(args, env) {
+  const { reason } = args;
+  const r = source4Routing(env);
+  if (r.billingPhone) {
+    sendTelegramAlert(env, `📲 <b>Carolina — Route to billing</b>\n${reason || ''}`).catch(()=>{});
+    return json({ result: 'Connecting you with billing now — please hold.', action: { type: 'transfer_call', number: r.billingPhone } });
+  }
+  kvPut(env, `voice:source4:callback:billing:${Date.now()}`, args).catch(()=>{});
+  sendTelegramAlert(env, `⚠️ <b>Carolina — Billing route queued (no SOURCE4_BILLING_PHONE)</b>\n${reason || '?'}`).catch(()=>{});
+  return json({ result: `Let me get billing to call you right back. Best number?` });
+}
+
+async function carolinaLogServiceIssue(args, callId, env) {
+  const { customer_name, company, phone, email, issue, severity, order_number } = args;
+  const r = source4Routing(env);
+  await kvPut(env, `voice:source4:service_issue:${Date.now()}`, { ...args, call_id: callId });
+  if (phone) await kvPut(env, `voice:source4:caller:${String(phone).replace(/\D/g,'')}:${Date.now()}`, { ...args, outcome: 'service_issue', call_id: callId });
+  const sevFlag = severity === 'urgent' ? '🚨 ' : '';
+  await sendTelegramAlert(env,
+    `${sevFlag}🛠 <b>Carolina — Service issue logged</b>\n👤 ${customer_name || '?'}${company ? ' / ' + company : ''}\n📞 ${phone || '?'}\n📧 ${email || '?'}\n🆔 Order: ${order_number || '?'}\n⚠️ Severity: ${severity || 'normal'}\n📝 ${issue || '?'}`);
+  await brevoSend(env, 'Carolina (Source 4)', 'noreply@irontigerdigital.com', r.supportEmail,
+    `[Source 4 Voice]${severity === 'urgent' ? ' URGENT' : ''} Service issue — ${customer_name || 'Unknown'}`,
+    null,
+    `Service issue logged by Carolina:\n\nCustomer: ${customer_name || '-'}\nCompany: ${company || '-'}\nPhone: ${phone || '-'}\nEmail: ${email || '-'}\nOrder: ${order_number || '-'}\nSeverity: ${severity || 'normal'}\n\nIssue:\n${issue || '-'}\n\nCall ID: ${callId}`);
+  return json({ result: `Service issue logged${severity === 'urgent' ? ' as urgent' : ''}. Our support team will follow up within ${severity === 'urgent' ? '2' : '4'} business hours.` });
+}
+
+async function carolinaRequestEmailFollowup(args, callId, env) {
+  const { email, topic, notes, customer_name } = args;
+  if (!email) return json({ result: `What's the best email for me to send the follow-up to?` });
+  await kvPut(env, `voice:source4:email_followup:${Date.now()}`, { ...args, call_id: callId });
+  const ok = await brevoSend(env, 'Source 4 Industries', 'noreply@irontigerdigital.com', email,
+    `Source 4 follow-up: ${topic || 'your inquiry'}`,
+    null,
+    `Hi${customer_name ? ' ' + customer_name : ''},\n\nThanks for reaching out to Source 4 Industries. As discussed on our call, here's the follow-up on ${topic || 'your inquiry'}:\n\n${notes || 'Our team will be in touch shortly with the details we discussed.'}\n\nReply to this email or call us at (702) 765-4166 if you need anything else.\n\n— Carolina, Source 4 Industries`);
+  await sendTelegramAlert(env,
+    `📧 <b>Carolina — Email follow-up</b>\nTo: ${email}\nTopic: ${topic || '?'}\n${ok ? '✅ delivered' : '❌ failed'}`);
+  return json({ result: ok ? `Sent the follow-up to ${email}.` : `Email had trouble going through — Costa will get on it directly.` });
+}
+
+async function carolinaUpdateKlaviyoEvent(args, env) {
+  // No Klaviyo integration yet — log to KV for batch sync.
+  const { event_name, customer_email, properties } = args;
+  await kvPut(env, `voice:source4:klaviyo_pending:${Date.now()}`, { event_name, customer_email, properties });
+  return json({ result: `Logged.` });
+}
+
+async function carolinaSaveDisposition(args, callId, env) {
+  const { call_outcome, intent, notes, follow_up_at, customer_phone } = args;
+  await kvPut(env, `voice:source4:disposition:${callId || Date.now()}`, { call_outcome, intent, notes, follow_up_at, customer_phone, call_id: callId });
+  if (customer_phone) await kvPut(env, `voice:source4:caller:${String(customer_phone).replace(/\D/g,'')}:${Date.now()}`, { call_outcome, intent, notes, call_id: callId });
+  const flagMap = { quote_submitted: '🛠', spec_call_booked: '🔧', sale: '💰', callback_requested: '📞', escalated: '⚠️' };
+  const flag = flagMap[call_outcome];
+  if (flag) {
+    await sendTelegramAlert(env,
+      `${flag} <b>Carolina — ${String(call_outcome).replace(/_/g,' ').toUpperCase()}</b>\n📞 ${customer_phone || '?'}\n🎯 Intent: ${intent || '?'}${notes ? `\n📝 ${notes}` : ''}${follow_up_at ? `\n🔁 Follow-up: ${follow_up_at}` : ''}`);
+  }
+  return json({ result: `Saved: ${call_outcome}` });
+}
+
+function carolinaTransferToOwner(args, env) {
+  // Source 4 "owner" routes to Costa (agency); Costa re-routes to Taylor as needed.
+  const { reason } = args;
+  sendTelegramAlert(env, `📲 <b>Carolina — Transfer to owner (Costa)</b>\nReason: ${reason || '?'}`).catch(()=>{});
+  return json({
+    result: 'Connecting you with the owner now — please hold.',
+    action: { type: 'transfer_call', number: COSTA_PHONE }
+  });
 }
 
 const CALENDLY_EVENT_TYPE_URI = 'https://api.calendly.com/event_types/3c50ea0f-b4fe-407c-9356-a1f10b8a3144';
@@ -2394,86 +2771,7 @@ async function getCalendlyBookingUrl(env) {
   }
 }
 
-async function vapiBookDemo(args, toolCallId, callId, env) {
-  const { prospect_id, slot_iso, email, notes, phone } = args;
-
-  const bookingUrl = await getCalendlyBookingUrl(env);
-  const isUnique = bookingUrl !== CALENDLY_FALLBACK_URL;
-
-  if (env.SPAM_LOG) {
-    try {
-      await env.SPAM_LOG.put(`demo_booking:${Date.now()}:${prospect_id}`, JSON.stringify({
-        prospect_id, slot_iso, email, phone, notes, call_id: callId,
-        booking_url: bookingUrl, unique_link: isUnique,
-        booked_at: new Date().toISOString(), status: 'calendly_link_sent'
-      }), { expirationTtl: 7776000 });
-    } catch (e) { /* non-blocking */ }
-  }
-
-  if (email && env.BREVO_API_KEY) {
-    try {
-      await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sender: { name: 'Iron Tiger Digital', email: 'irontigerdigital@gmail.com' },
-          to: [{ email }],
-          subject: 'Pick a 15-min slot with Costa',
-          htmlContent: `<div style="font-family:Arial,sans-serif;color:#333;max-width:600px">
-            <h2 style="color:#c45c26">Let's lock in your demo</h2>
-            <p>As promised, here's the link to pick a 15-minute slot with Costa to walk through the site, the lead numbers, and pricing for your area:</p>
-            <p style="margin:24px 0"><a href="${bookingUrl}" style="background:#c45c26;color:#fff;padding:12px 28px;text-decoration:none;border-radius:4px;font-weight:bold">Pick a Time →</a></p>
-            <p style="color:#888;font-size:13px">— Iron Tiger Digital</p>
-          </div>`
-        })
-      });
-    } catch (e) { console.error('book_demo Brevo error:', e.message); }
-  }
-
-  await sendTelegramAlert(env,
-    `📅 <b>Elise — Demo link sent</b>\n📧 ${email}\n🆔 ${prospect_id}${notes ? `\n📝 ${notes}` : ''}\n🔗 ${bookingUrl}${isUnique ? ' (unique)' : ' (fallback)'}`
-  );
-
-  return json({ results: [{ toolCallId,
-    result: `I just sent the Calendly link to ${email}. Pick whatever time works — Costa will get the invite the moment you book it.`
-  }]});
-}
-
-async function vapiSaveDisposition(args, toolCallId, callId, env) {
-  const { prospect_id, outcome, notes, callback_at } = args;
-
-  if (env.SPAM_LOG) {
-    try {
-      await env.SPAM_LOG.put(`vapi_call:${callId || Date.now()}:${prospect_id}`, JSON.stringify({
-        prospect_id, outcome, notes, callback_at,
-        call_id: callId, saved_at: new Date().toISOString()
-      }), { expirationTtl: 7776000 });
-    } catch (e) { /* non-blocking */ }
-  }
-
-  const alertOutcomes = { sold: '💰', demo_booked: '📅', callback: '📞' };
-  if (alertOutcomes[outcome]) {
-    await sendTelegramAlert(env,
-      `${alertOutcomes[outcome]} <b>Elise — ${outcome.replace('_', ' ').toUpperCase()}</b>\n🆔 ${prospect_id}${notes ? `\n📝 ${notes}` : ''}${callback_at ? `\n🔁 Callback: ${callback_at}` : ''}`
-    );
-  }
-
-  return json({ results: [{ toolCallId, result: `Saved: ${outcome}` }] });
-}
-
-async function vapiTransferToOwner(args, toolCallId, env) {
-  const { reason } = args;
-
-  await sendTelegramAlert(env,
-    `📲 <b>Elise — LIVE TRANSFER incoming</b>\nConnecting prospect to Costa now\n📝 ${reason || 'prospect requested human'}`
-  );
-
-  return json({
-    results: [{ toolCallId, result: 'Connecting you with Costa now — please hold for just a moment.' }],
-    destination: { type: 'number', number: COSTA_PHONE, message: 'Please hold for just a moment.' }
-  });
-}
-
+// ── Pricing data (used by kimRequestQuote) ─────────────────────────────────────
 const TIER1_CITIES = new Set(['phoenix','houston','atlanta','dallas','chicago','los angeles','new york','miami','las vegas','denver','seattle','portland','san antonio','austin','san diego','san jose','minneapolis','detroit','baltimore','washington']);
 const TIER3_CITIES = new Set(['spokane','rapid city','billings','cedar rapids','topeka','lawton','lake charles','edmond','bloomington','mcallen','laredo','shreveport','amarillo']);
 
@@ -2489,63 +2787,6 @@ const PRICING_MATRIX = {
   'radon mitigation': { t1:[1400,2000], t2:[900,1400],  t3:[600,900],   ppl:[100,75,55] },
   'tree service':     { t1:[1200,1800], t2:[800,1200],  t3:[500,800],   ppl:[50,35,25] },
 };
-
-async function vapiRequestQuote(args, toolCallId, env) {
-  const { niche, city } = args;
-  const nicheKey = (niche || '').toLowerCase().trim();
-  const cityKey  = (city  || '').toLowerCase().trim();
-  const p = PRICING_MATRIX[nicheKey];
-
-  if (!p) {
-    return json({ results: [{ toolCallId,
-      result: `Real number depends on your market — let me set the demo so Costa can run the actual quote for your area.`
-    }]});
-  }
-
-  const tierIdx = TIER1_CITIES.has(cityKey) ? 0 : TIER3_CITIES.has(cityKey) ? 2 : 1;
-  const band = [p.t1, p.t2, p.t3][tierIdx];
-  const flat = Math.round((band[0] + band[1]) / 2 / 50) * 50;
-  const ppl  = p.ppl[tierIdx];
-
-  return json({ results: [{ toolCallId,
-    result: `$${flat.toLocaleString()}/month flat — all leads exclusive, month-to-month, 30-day cancel, no setup fee. Or pay-per-lead at $${ppl}/qualified lead if you'd rather not commit monthly.`
-  }]});
-}
-
-async function vapiSendDemoLink(args, toolCallId, env) {
-  const { email, prospect_id } = args;
-
-  if (!env.BREVO_API_KEY) {
-    return json({ results: [{ toolCallId, result: "I'll have Costa send the demo link over shortly." }] });
-  }
-
-  const demoUrl = 'https://demo.irontigerdigital.com';
-  const htmlContent = `<div style="font-family:Arial,sans-serif;color:#333;max-width:600px">
-    <h2 style="color:#c45c26">Iron Tiger Digital — Demo Site</h2>
-    <p>As promised, here's a look at what you'd be getting:</p>
-    <p style="margin:24px 0"><a href="${demoUrl}" style="background:#c45c26;color:#fff;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:bold">View Demo Site →</a></p>
-    <p>Your site would be built and ranked for your specific niche and city. To see live lead data and walk through the numbers, grab a 15-minute slot with Costa.</p>
-    <p style="color:#888;font-size:13px">— Elise · Iron Tiger Digital</p>
-  </div>`;
-
-  try {
-    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST',
-      headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sender: { name: 'Iron Tiger Digital', email: 'irontigerdigital@gmail.com' },
-        to: [{ email }],
-        subject: 'Your Iron Tiger Digital demo site',
-        htmlContent
-      })
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return json({ results: [{ toolCallId, result: `Demo link sent to ${email}.` }] });
-  } catch (e) {
-    console.error('vapiSendDemoLink Brevo error:', e.message);
-    return json({ results: [{ toolCallId, result: "Email failed — I've noted it and Costa will follow up directly." }] });
-  }
-}
 
 // ── Calendly Webhook Handler ──
 async function handleCalendlyWebhook(request, env) {
