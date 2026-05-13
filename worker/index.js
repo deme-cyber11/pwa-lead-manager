@@ -366,9 +366,24 @@ export default {
         });
 
         if (!reg.ok) {
-          const err = await reg.text();
-          console.error('Retell register failed:', reg.status, err);
-          return twiml('<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna">Sorry, we are having trouble connecting your call. Please try again shortly.</Say><Hangup/></Response>');
+          const errBody = await reg.text();
+          console.error('Retell register failed (attempt 1):', reg.status, errBody);
+          // Retry once after 800ms before falling back to Costa's cell
+          await new Promise(r => setTimeout(r, 800));
+          const reg2 = await fetch('https://api.retellai.com/v2/register-phone-call', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${env.RETELL_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agent_id: agentId, from_number: from, to_number: to, direction: 'inbound', metadata: { twilio_call_sid: callSid } })
+          });
+          if (!reg2.ok) {
+            const err2 = await reg2.text();
+            console.error('Retell register failed after retry, forwarding to Costa:', reg2.status, err2);
+            await sendTelegramAlert(env, `⚠️ <b>Retell connect failed — forwarding to Costa</b>\nSite: ${SITE_LABELS[to] || to}\nCaller: ${from}\nStatus: ${reg2.status}`);
+            return twiml(`<?xml version="1.0" encoding="UTF-8"?><Response><Dial timeout="25"><Number>${COSTA_PHONE}</Number></Dial></Response>`);
+          }
+          const { call_id: call_id2 } = await reg2.json();
+          const sip2 = `sip:${call_id2}@sip.retellai.com;transport=tcp`;
+          return twiml(`<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true"><Sip>${sip2}</Sip></Dial></Response>`);
         }
 
         const { call_id } = await reg.json();
@@ -376,7 +391,8 @@ export default {
         return twiml(`<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true"><Sip>${sip}</Sip></Dial></Response>`);
       } catch (e) {
         console.error('twilio-voice error:', e.message);
-        return twiml('<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, system error.</Say><Hangup/></Response>');
+        await sendTelegramAlert(env, `⚠️ <b>Retell connect error — forwarding to Costa</b>\nSite: ${SITE_LABELS[to] || to}\nError: ${e.message}`).catch(() => {});
+        return twiml(`<?xml version="1.0" encoding="UTF-8"?><Response><Dial timeout="25"><Number>${COSTA_PHONE}</Number></Dial></Response>`);
       }
     }
 
