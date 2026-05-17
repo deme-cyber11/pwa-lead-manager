@@ -387,6 +387,11 @@ export default {
         }
 
         const { call_id } = await reg.json();
+        // Mark this Twilio call as Retell-handled so the call-status backup handler
+        // doesn't fire a false "short/dropped" alarm when Sarah answers a short call.
+        if (callSid && env.SPAM_LOG) {
+          await env.SPAM_LOG.put(`retell_handled:${callSid}`, '1', { expirationTtl: 86400 }).catch(() => {});
+        }
         const sip = `sip:${call_id}@sip.retellai.com;transport=tcp`;
         return twiml(`<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true"><Sip>${sip}</Sip></Dial></Response>`);
       } catch (e) {
@@ -840,6 +845,16 @@ async function handleCallStatus(request, env) {
   // Only skip if it was forwarded AND a real conversation (>=90s, caught above).
   // Note: handleMissedCall (via <Dial> action) fires for true no-answer/busy.
   // This catches the voicemail case where DialCallStatus = 'completed' (voicemail answered).
+
+  // Skip if Retell handled this call — Sarah answered, short duration is normal
+  if (callSid && env.SPAM_LOG) {
+    try {
+      const retellHandled = await env.SPAM_LOG.get(`retell_handled:${callSid}`);
+      if (retellHandled) {
+        return new Response('OK', { status: 200 });
+      }
+    } catch (e) { /* non-blocking */ }
+  }
 
   // Check if handleMissedCall already sent SMS for this call (dedup)
   if (callSid && env.SPAM_LOG) {
@@ -1886,6 +1901,38 @@ async function getLeadQualityReport(url, env) {
         name: lead.name || lead.fullName, phone: lead.phone,
         site: lead.site, source: lead.source, timestamp: lead.timestamp,
         enriched: !!enrichment,
+      });
+    }
+
+    const format = (url.searchParams.get('format') || 'json').toLowerCase();
+    if (format === 'csv') {
+      const cols = ['timestamp', 'id', 'site', 'source', 'name', 'phone',
+        'score', 'bucket', 'enriched', 'repeat_site_count',
+        'phone_valid', 'has_real_name', 'has_service_area',
+        'call_duration', 'not_blocked', 'line_type_residential',
+        'region_match', 'repeat_phone_penalty'];
+      const esc = (v) => {
+        const s = v == null ? '' : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const lines = [cols.join(',')];
+      for (const r of scored) {
+        const c = r.components || {};
+        lines.push([
+          r.timestamp, r.id, r.site, r.source, r.name, r.phone,
+          r.score, r.bucket, r.enriched, r.repeat_site_count,
+          c.phone_valid, c.has_real_name, c.has_service_area,
+          c.call_duration, c.not_blocked, c.line_type_residential,
+          c.region_match, c.repeat_phone_penalty,
+        ].map(esc).join(','));
+      }
+      return new Response(lines.join('\n') + '\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="lead-quality-${days}d.csv"`,
+          ...CORS_HEADERS,
+        },
       });
     }
 
