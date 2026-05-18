@@ -1353,7 +1353,7 @@ async function handleLeadIngest(request, env, ctx) {
       (service ? `\n<b>Service:</b> ${service}` : '') +
       (urgency ? `\n<b>Urgency:</b> ${urgency}` : '') +
       (message ? `\n<b>Note:</b> ${message.slice(0, 200)}` : '');
-    await sendTelegramAlert(env, tgText);
+    await sendTelegramLeadAlert(env, tgText);
 
     // ── Store lead in KV for CRM dashboard ──
     if (env.SPAM_LOG) {
