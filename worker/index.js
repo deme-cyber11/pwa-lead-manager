@@ -2287,12 +2287,41 @@ const BAYOU_TECHE_FROM = '+13374920960';  // Bayou Teche Septic Twilio number
 const BAYOU_TECHE_FORM = 'https://bayoutecheseptic.com/estimate/';
 
 // Map agent_id → site config (Twilio number used as SMS sender + estimate form URL)
+// Updated 2026-05-18: synced with retell-agent-map.json + added all 26 sites
 const RETELL_SITE_MAP = {
-  'agent_c89f789b30dde8b7e1edcd9ec9': { label: 'Lafayette Septic Service', from: '+13374920960', form_url: 'https://bayoutecheseptic.com/estimate/' },
-  'agent_90bf3f1172eda6a8620b41d99d': { label: 'Peak Shine Detailing',     from: '+14235891682', form_url: 'https://peakshinedetailing.com/estimate/' },
-  'agent_4d788033bcfe3eb5efc900ba98': { label: 'Knox Pressure Pros',       from: '+18653788377', form_url: 'https://knoxpressurepros.com/estimate/' },
-  'agent_34b1d6e96da170cd9ae51473bc': { label: 'Inland NW Hot Tubs',       from: '+15092367423', form_url: 'https://inlandnwhottubs.com/estimate/' },
-  'agent_d17e4bc682748e8377bc9cb7d0': { label: 'Tally Mobile Mechanic',    from: '+18507263411', form_url: 'https://tallymobilemechanic.com/estimate/' },
+  'agent_0280ac8f628387b4e5042b14df': { label: 'Peak Shine Detailing',              from: '+14235891682', form_url: 'https://peakshinedetailing.com/estimate/' },
+  'agent_0541a634f0a65ee206bde30592': { label: 'Knox Pressure Pros',                from: '+18653788377', form_url: 'https://knoxpressurepros.com/estimate/' },
+  'agent_e56bd76f7a7c69c588f8bd0fc5': { label: 'Inland NW Hot Tubs',                from: '+15092367423', form_url: 'https://inlandnwhottubs.com/estimate/' },
+  'agent_677843db711312c8a6dfdb5138': { label: 'Tally Mobile Mechanic',             from: '+18507263411', form_url: 'https://tallymobilemechanic.com/estimate/' },
+  'agent_666dc6e1a1251e7c58363f6140': { label: 'Phoenix Pool Resurfacing',          from: '+16232949154', form_url: 'https://phxpoolresurfacing.com/estimate/' },
+  'agent_68c2dd8c8d10b1d086fdbea2fd': { label: 'Alamo Pool Resurfacing',            from: '+17262685597', form_url: 'https://alamopoolresurfacing.com/estimate/' },
+  'agent_63f2a2fdf19a501bb4d6bf1f97': { label: 'Huntsville HVAC Pros',              from: '+12562159287', form_url: 'https://huntsvillehvacpros.com/estimate/' },
+  'agent_ac194200fa626e58aa886f6608': { label: '904 Epoxy Floors',                  from: '+19042044753', form_url: 'https://904epoxyfloors.com/estimate/' },
+  'agent_b7b56568c8e8fe9803e23c5ce5': { label: 'Tampa Concrete Pros',               from: '+18137059021', form_url: 'https://tampaconcretepros.com/estimate/' },
+  'agent_8e26a67d7a18046603539713e0': { label: 'Springs Mold Solutions',            from: '+17194968287', form_url: 'https://springsmoldsolutions.com/estimate/' },
+  'agent_a954ce25aafc3745161f5e4879': { label: 'Elkhorn Hardwood',                  from: '+14027714422', form_url: 'https://elkhornhardwood.com/estimate/' },
+  'agent_88ff2042b8965c63523c90395e': { label: 'Selkirk Hardwood',                  from: '+15094619375', form_url: 'https://selkirkhardwood.com/estimate/' },
+  'agent_42d3e89459d09156610e95f8ed': { label: 'Orlando Concrete Driveway',         from: '+14073262707', form_url: 'https://orlandoconcretedriveway.com/estimate/' },
+  'agent_69514907edbf428d425af056dc': { label: 'Tulsa Water Damage Pros',           from: '+19187232096', form_url: 'https://tulsawaterdamagepros.com/estimate/' },
+  'agent_defb2d7b43b38ae73f605e5b5b': { label: 'Rim Rock Radon',                    from: '+14064767479', form_url: 'https://rimrockradon.com/estimate/' },
+  'agent_f96eacfdee1c7e7b62ea2dedf7': { label: 'Bloomington Bathroom Remodeling',   from: '+19529007486', form_url: 'https://bloomingtonbathroomremodeling.com/estimate/' },
+  'agent_e08b788d6d76a933cd92758fce': { label: 'Boulder Bathroom Remodeling',       from: '+17207347645', form_url: 'https://boulderbathroomremodeling.com/estimate/' },
+  'agent_5bb650d2391981ae79369f4696': { label: 'Five Seasons Radon',                from: '+13195285190', form_url: 'https://fiveseasonsradon.com/estimate/' },
+  'agent_e362de96c833309fc616293594': { label: 'Scissortail Bath',                  from: '+14052813672', form_url: 'https://scissortailbath.com/estimate/' },
+  'agent_f5226bea1e00ca2ac0df893727': { label: 'Lake Charles Bathroom Remodeling',  from: '+13375208573', form_url: 'https://lakecharlesbathroomremodeling.com/estimate/' },
+  'agent_18bd5d4863b309d7b04989b9fb': { label: 'Contraband Bayou Tree',             from: '+13375482811', form_url: 'https://contrabandbayoutree.com/estimate/' },
+  'agent_0a468fba428195ee98f3572cbd': { label: 'Comanche Tree Experts',             from: '+15807811781', form_url: 'https://comanchetreeexperts.com/estimate/' },
+  'agent_f44eac70114811a67b5be8f64b': { label: 'NTX Tree Experts',                  from: '+14695296768', form_url: 'https://ntxtreeexperts.com/estimate/' },
+  'agent_1232912b64f2e9b36d7bda12fc': { label: 'Badlands Radon',                    from: '+16056405642', form_url: 'https://badlandsradon.com/estimate/' },
+  'agent_6f5c8135b88f8d329eeeecc5b8': { label: 'Topeka Pro Foundation',             from: '+17857064425', form_url: 'https://topekaprofoundation.com/estimate/' },
+  'agent_d4a427f9f72b58772ff3a0a63c': { label: 'Delta Tree Doctors',                from: '+18707713364', form_url: 'https://deltatreedoctors.com/estimate/' },
+  'agent_044fd58ef95c31436a8c0e00c8': { label: 'Red Stick Siding',                  from: '+12255354918', form_url: 'https://redsticksidingandroof.com/estimate/' },
+  // Legacy agent IDs (pre-May-11 batch) kept as fallback aliases
+  'agent_c89f789b30dde8b7e1edcd9ec9': { label: 'Lafayette Septic Service',          from: '+13374920960', form_url: 'https://bayoutecheseptic.com/estimate/' },
+  'agent_90bf3f1172eda6a8620b41d99d': { label: 'Peak Shine Detailing',              from: '+14235891682', form_url: 'https://peakshinedetailing.com/estimate/' },
+  'agent_4d788033bcfe3eb5efc900ba98': { label: 'Knox Pressure Pros',                from: '+18653788377', form_url: 'https://knoxpressurepros.com/estimate/' },
+  'agent_34b1d6e96da170cd9ae51473bc': { label: 'Inland NW Hot Tubs',                from: '+15092367423', form_url: 'https://inlandnwhottubs.com/estimate/' },
+  'agent_d17e4bc682748e8377bc9cb7d0': { label: 'Tally Mobile Mechanic',             from: '+18507263411', form_url: 'https://tallymobilemechanic.com/estimate/' },
 };
 
 async function handleRetellTool(request, env, path, ctx) {
@@ -2424,7 +2453,7 @@ async function retellSaveLead(args, callId, site, env, ctx) {
 
   const urgencyFlag = urgency === 'emergency' ? '🚨 EMERGENCY — ' : urgency === 'same-day' ? '⚡ SAME-DAY — ' : '';
   const alertMsg = `${urgencyFlag}🔥 NEW LEAD — ${site.label}\n👤 ${fullName}\n📞 ${phoneClean}\n📍 ${address || 'not given'}\n🔧 ${service_requested || 'unknown'}\n🕐 ${urgency || 'unknown'}${problem_description ? '\n📝 ' + problem_description : ''}`;
-  await sendTelegramAlert(env, alertMsg);
+  try { await sendTelegramAlert(env, alertMsg); } catch (e) { console.error('retellSaveLead Telegram alert failed (non-fatal):', e.message); }
 
   if (sms_ok !== false && phoneClean) {
     try {
