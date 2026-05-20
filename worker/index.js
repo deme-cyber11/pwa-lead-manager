@@ -1378,6 +1378,22 @@ async function handleLeadIngest(request, env, ctx) {
           transcript: null,
           raw: fields
         };
+
+        // Score the form lead with whatever signals we have at save-time
+        // (enrichment lookup hasn't run yet, so line_type / region_match
+        // start as 0; the /api/leads/quality-report endpoint recomputes
+        // with enrichment overlay on every read). Mirrors the voice path
+        // at the other write site.
+        try {
+          const dynBlocked = await loadDynamicBlocklist(env);
+          const scoring = computeLeadQualityScore(leadRecord, dynBlocked, null, null);
+          leadRecord.quality_score = scoring.score;
+          leadRecord.quality_bucket = scoring.bucket;
+          leadRecord.quality_components = scoring.components;
+        } catch (e) {
+          console.error('form lead scoring at save failed:', e.message);
+        }
+
         await env.SPAM_LOG.put(leadKey, JSON.stringify(leadRecord), { expirationTtl: 7776000 }); // 90 days
 
         // Update index
