@@ -1952,10 +1952,39 @@ async function getLeadQualityReport(url, env) {
       });
     }
 
+    // Per-site bucket breakdown — useful for spotting which spec sites are
+    // currently getting good vs junk leads. Sorted by total descending so
+    // the top-volume sites are first in the response.
+    const bySite = {};
+    let scoredSum = 0;
+    for (const r of scored) {
+      const siteKey = r.site || 'unknown';
+      if (!bySite[siteKey]) {
+        bySite[siteKey] = { total: 0, high: 0, medium: 0, low: 0, junk: 0, score_sum: 0 };
+      }
+      bySite[siteKey].total += 1;
+      bySite[siteKey][r.bucket] += 1;
+      bySite[siteKey].score_sum += r.score;
+      scoredSum += r.score;
+    }
+    const perSite = Object.entries(bySite)
+      .map(([site, b]) => ({
+        site,
+        total: b.total,
+        high: b.high,
+        medium: b.medium,
+        low: b.low,
+        junk: b.junk,
+        avg_score: b.total ? Math.round(b.score_sum / b.total) : 0,
+      }))
+      .sort((a, b) => b.total - a.total);
+
     return json({
       window_days: days,
       total: scored.length,
+      avg_score: scored.length ? Math.round(scoredSum / scored.length) : 0,
       buckets,
+      per_site: perSite,
       bucket_definitions: {
         junk: '0-25 (likely spam, missing data, or blocked)',
         low: '26-50 (incomplete record)',
