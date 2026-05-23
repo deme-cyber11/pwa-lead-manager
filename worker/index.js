@@ -1285,7 +1285,9 @@ async function handleLeadIngest(request, env, ctx) {
       return json({ success: true }); // silent drop
     }
 
-    const name    = fields.name    || fields.Name    || fields.customer_name || 'Unknown';
+    const name    = fields.name    || fields.Name    || fields.customer_name
+                  || ([fields.first_name, fields.last_name].filter(Boolean).join(' ') || null)
+                  || 'Unknown';
     const email   = fields.email   || fields.Email   || '';
     const phone   = fields.phone   || fields.Phone   || '';
     const address = fields.address || fields.Address || '';
