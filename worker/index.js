@@ -1813,17 +1813,43 @@ async function enrichLeadAtSave(leadId, phoneE164, env) {
     return;
   }
 
-  // Region-match: phone area code vs site label (simple table — keep in sync
-  // with tools/lead-enrichment.py SITE_AREA_CODES if Costa adds new metros).
+  // Region-match: phone area code vs SITE_LABELS value (full site name).
+  // Keys MUST match what the lead's `site` field is set to at save-time
+  // (per SITE_LABELS at line 162). Earlier versions of this table keyed by
+  // bare city names ('Knoxville', 'Spokane') — those never matched because
+  // `lead.site` is e.g. "Knox Pressure" / "Selkirk Hardwood". That bug
+  // silently zeroed the region_match component on 25/28 sites. Keep in
+  // sync with tools/lead-enrichment.py SITE_AREA_CODES.
   const SITE_AREA_CODES = {
-    'Knoxville':     ['865'],
-    'Spokane':       ['509'],
-    'Tallahassee':   ['850'],
-    'Lafayette':     ['337'],
-    'Baton Rouge':   ['225'],
-    'Phoenix':       ['480', '602', '623'],
-    'Kingsport':     ['423'],
-    'San Antonio':   ['210', '726'],
+    'Tulsa Water Damage':            ['918', '539'],
+    'Huntsville HVAC':               ['256', '938'],
+    'SA Pool Resurfacing':           ['210', '726', '830'],
+    'Jacksonville Epoxy':            ['904', '386'],
+    'Tampa Concrete':                ['813', '727', '941'],
+    'Knox Pressure':                 ['865'],
+    'Springs Mold':                  ['719'],
+    'Peak Shine Detailing':          ['423'],
+    'Selkirk Hardwood':              ['509'],
+    'Pool Directory':                ['813', '727', '941', '352', '904', '407', '321', '561'],
+    'Orlando Concrete Driveway':     ['407', '321', '689', '386'],
+    'PHX Pool Resurfacing':          ['480', '602', '623', '928'],
+    'Delta Tree Doctors':            ['870'],
+    'McKinney Tree Service':         ['469', '214', '972', '945'],
+    'Boulder Bathroom Remodeling':   ['720', '303', '970'],
+    'Cedar Rapids Radon':            ['319', '563'],
+    'Lake Charles Tree Service':     ['337'],
+    'Lawton Tree Service':           ['580'],
+    'Spokane Hot Tub Repair':        ['509'],
+    'Baton Rouge Siding':            ['225'],
+    'Rapid City Radon':              ['605'],
+    'Lafayette Septic Service':      ['337'],
+    'Topeka Foundation Repair':      ['785'],
+    'Lake Charles Bathroom':         ['337'],
+    'Billings Radon':                ['406'],
+    'Bloomington Bathroom':          ['952', '612', '763', '651'],
+    'Edmond Bathroom':               ['405', '580'],
+    'Elkhorn Hardwood':              ['402', '531'],
+    'Tally Mobile Mechanic':         ['850'],
   };
   let region_match = null;
   try {
