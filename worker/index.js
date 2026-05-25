@@ -1753,7 +1753,16 @@ function computeLeadQualityScore(lead, dynBlocked, enrichment, repeatPhoneMap) {
   }
   components.repeat_phone_penalty = -repeatPenalty;
 
-  const total = Math.max(0, Math.min(100, rawTotal - repeatPenalty));
+  // Transcript-spam penalty. Only fires on voice leads with a transcript;
+  // catches robo-call patterns the upstream BLOCKED_CALLERS list missed.
+  // Penalty-only by design so the 100-point ceiling for clean voice + clean
+  // form leads stays identical. See `transcriptSpamPenalty` for the marker
+  // set — keep it short and high-precision to avoid false positives that
+  // would penalize legitimate vague callers.
+  const transcriptPenalty = transcriptSpamPenalty(lead.transcript);
+  components.transcript_spam_penalty = -transcriptPenalty;
+
+  const total = Math.max(0, Math.min(100, rawTotal - repeatPenalty - transcriptPenalty));
   return {
     score: total,
     bucket: bucketize(total),
@@ -1767,6 +1776,44 @@ function bucketize(score) {
   if (score >= 51) return 'medium';
   if (score >= 26) return 'low';
   return 'junk';
+}
+
+// Robo-call transcript markers. These are the canonical opening lines for the
+// auto-warranty / IRS-scam / "you have been selected" robo dialers that
+// occasionally make it past BLOCKED_CALLERS (spoofed CLI, fresh number).
+// Markers are matched case-insensitive against the full transcript. Keep this
+// list short and high-precision; a single hit returns the full -15 penalty.
+//
+// If you add a marker, prefer a multi-word phrase over a single word. "Press
+// one" alone is too noisy (a real lead might say "yeah I'll press 1 on the
+// menu"); "press one for our specialist" is unmistakable robo phrasing.
+const TRANSCRIPT_SPAM_MARKERS = [
+  /you have been selected/i,
+  /your (?:car|auto|vehicle) warranty/i,
+  /extended warranty/i,
+  /final notice/i,
+  /press one to speak/i,
+  /press 1 to speak/i,
+  /irs (?:has been )?attempting/i,
+  /lawsuit (?:filed|pending) against you/i,
+  /pay your debt/i,
+  /your social security (?:number|benefits) (?:has|have) been suspended/i,
+  /one time grant/i,
+  /federal student loan forgiveness/i,
+  /your (?:medicare|medical) benefits/i,
+];
+
+/**
+ * Return a non-negative penalty (0 or 15) for a voice transcript. 0 if no
+ * transcript or no markers match. 15 if any marker hits. The penalty caller
+ * subtracts this from rawTotal, mirroring the repeat-phone-penalty pattern.
+ */
+function transcriptSpamPenalty(transcript) {
+  if (!transcript || typeof transcript !== 'string') return 0;
+  for (const re of TRANSCRIPT_SPAM_MARKERS) {
+    if (re.test(transcript)) return 15;
+  }
+  return 0;
 }
 
 // Fire-and-forget enrichment at save-time. Reverse-phone-lookup via either
